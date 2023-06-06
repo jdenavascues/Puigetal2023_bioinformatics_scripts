@@ -1,0 +1,333 @@
+---
+title: "1. RNAseq analysis of FACS-purified ISC/EBs"
+description: "DGE analysis based on DESeq2"
+principal investigator: "Joaquín de Navascués"
+researchers: "Aleix Puig-Barbé, Joaquín de Navascués"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: readable
+    df_print: paged
+    css: doc.css
+---
+```{r setup, echo=FALSE, cache=FALSE}
+ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+knitr::opts_chunk$set(dev = 'png', 
+                      fig.align = 'center', fig.height = 7, fig.width = 8.5, 
+                      pdf.options(encoding = "ISOLatin9.enc"),
+                      fig.path='notebook_figs/', warning=FALSE, message=FALSE)
+```
+
+
+# 1 Preparation
+
+
+**Libraries:**
+```{r libraries, warning=FALSE, message=FALSE}
+if (!require("librarian")) install.packages("librarian")
+librarian::shelf(
+  # data
+  dplyr, stringr, DESeq2, edgeR, biomaRt, rtracklayer, GenomicFeatures, limma,
+  # graphics
+  ggplot2, pheatmap, scico, dendsort,
+  # convenience
+  here, writexl, gzcon)
+```
+
+**Set working directory:**
+```{r setwd}
+if (Sys.getenv("RSTUDIO")==1) {
+   # setwd to where the editor is, if the IDE is RStudio
+  setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
+} else {
+  # setwd to where the editor is in a general way - maybe less failsafe than the previous
+  setwd(here::here())
+  # the following checks that the latter went well, but assuming
+  # that the user has not changed the name of the repo
+  d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
+  if (d != 'RNAseq-EmcDaSc-adult_midgut') { stop(
+    paste0("Could not set working directory automatically to where this",
+           " script resides.\nPlease do `setwd()` manually"))
+    }
+}
+```
+
+**To save images outside the repo (to reduce size):**
+```{r define_dir2figs}
+figdir <- paste0(c(head(str_split(getwd(),'/')[[1]],-1),
+                   paste0(tail(str_split(getwd(),'/')[[1]],1), '_figures')),
+                 collapse='/')
+dir.create(figdir, showWarnings = FALSE)
+```
+
+
+## 1.1 Experimental conditions
+
+
+These are defined in detail in the paper as well as the GEO submission.
+In an nutshell, five different strains were crossed to the _esg-Gal4, UAS-GFP_ driver stock, in two batches:
+
+* Batch `1`:
+  * control
+  * _UAS-daughterless_ (_da_)
+  * _UAS-da^RNAi^_ (TRiP-line, either <span style="color: red;">**JF02488 or JF02092**</span>)
+* Batch `2`:
+  * control
+  * _UAS-da:da_
+  * _UAS-scute_
+
+The target cells were FAC-sorted, their RNA extracted, reverse-transcribed, amplified and sequenced with Illumina as described in [Korzelius et al. (2019)](https://www.nature.com/articles/s41467-019-12003-0).
+
+
+## 1.2 Get gene symbols
+
+
+Genes are now identified as FlyBase IDs (e.g. FBgn0000061). To get also the gene names (e.g. _aristaless_):
+```{r get-gene-symbols}
+ensembl <- useEnsembl(biomart = "ENSEMBL_MART_ENSEMBL",
+                      dataset="dmelanogaster_gene_ensembl",
+                      host = "https://oct2022.archive.ensembl.org")
+                      # to update this: https://www.ensembl.org/Help/ArchiveRedirect
+filters <- listFilters(ensembl) # define filters for a specific query
+attributes <- listAttributes(ensembl) # define the features showed
+
+dlist <- getBM(attributes = c('ensembl_gene_id', 'external_gene_name'),
+               mart = ensembl)
+rownames(dlist) <- dlist$ensembl_gene_id
+dlist[1] <- NULL
+names(dlist) <- 'gene_symbol'
+write.table(dlist, file="resources/gene_symbols.txt", col.names=NA)
+```
+
+
+## 1.3 Load raw count data <span style="color: red;">GET FROM GEO</span>
+
+
+Read `featureCounts` results for all samples:
+```{r load-raw-counts}
+# get experimental design data:
+targets <- read.table("input/targets.txt", header=TRUE, sep="\t")
+# prepare to load gene count data
+zipfiles <- unzip("input/featurecounts.zip",list=TRUE)
+fcountf <- zipfiles$Name[ grepl('.featurecount$', zipfiles$Name) &
+                          !(grepl('^_', zipfiles$Name) )]
+
+rawData <- NULL
+# each column of rawData will contain the reads per gene of a sample
+counter <- 0
+for (fcf in targets$File) {
+  if (fcf %in% fcountf) {
+    fileContents <- read.table(unzip("input/featurecounts.zip", file=fcf), sep="\t", header=T)
+
+    } else { counter <- counter + 1 }
+  rawData <- cbind(rawData, fileContents[,7])
+}
+if (counter>0) {cat("There is/are ", counter, ' missing featureCount file(s) in the zipped directory')}
+unlink('*.featurecount') # cleanup - delete uncompressed files
+
+# add column and row names to the `rawData` matrix
+colnames(rawData) <- paste(targets$Condition, targets$Replicate, targets$Batch, sep='_')
+rownames(rawData) <- fileContents$Geneid
+
+# remove genes with low counts
+cpms <- cpm(rawData)
+keep <- rowSums(cpms > 1) >= 3 # detected in at least 3 samples
+rawData <- rawData[keep,]
+```
+
+
+# 2 Differential gene expression
+
+
+## 2.1 Set up `DESeq2DataSet` object
+
+
+Create experimental design object that contains the information from `targets`:
+```{r expt-design}
+exptDesign = data.frame(
+  row.names = colnames(rawData),
+  condition = targets$Condition,
+  batch = targets$Batch)
+```
+
+Create `DESeq2DataSet` object with information from `exptDesign` and `rawData`:
+```{r dge, warning=FALSE}
+exptObject <- DESeqDataSetFromMatrix(countData = rawData,
+                                     colData = exptDesign,
+                                     design = ~ batch + condition) 
+# specify 'Control' as the reference level
+exptObject$condition <- relevel(exptObject$condition, ref = "Control")
+```
+The formula `~ batch + condition` allows to take into account the genotype of the samples as well as the batch they come from, to remove batch effects. Note that `condition` is last in the formula - this is needed for the genotype to be the predictor variable (see [here](http://bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#differential-expression-analysis) why).
+
+
+## 2.2 Batch-correction
+
+
+Transform the normalized counts and plot them as PCA:
+```{r pca-raw}
+vsd_Object <- vst(exptObject, blind=TRUE)
+plotPCA(vsd_Object)
+```
+
+There's a clear (and expected) batch effect: batch 1 is in PC1 negative values while batch 2 is in PCA1 positive values. Remove batch effect and re-plot:
+```{r pca-batch-corr}
+assay(vsd_Object) <- removeBatchEffect(
+  assay(vsd_Object),
+  batch=vsd_Object$batch,
+  design=model.matrix(~condition, colData(vsd_Object))
+  )
+plotPCA(vsd_Object)
+```
+
+This makes sense: PC1 mostly separates *scute* overexpression from the rest, and PC2 is dominated by 'amount' of *daughterless* function (*da^RNAi^* < *control* < *da* < *da:da*). So we save this:
+```{r save-vst-bcorr-counts}
+saveRDS(vsd_Object, 'output/vst_pseudocounts_batchCorrected.RDS')
+```
+
+
+### Sample correlations
+
+
+To further visualise the similarity of the samples we use the transformed, normalized counts and perform hierarchical clustering (with hidden dendrograms):
+```{r sample-correlations, fig.height=6}
+# Compute the correlation values between samples
+vsd_cor_Object <- cor(assay(vsd_Object)) 
+
+# heatmap
+main.title <- 'RNAseq sample correlations'
+## get sorted clusters
+sort_hclust <- function(x) as.hclust(dendsort(as.dendrogram(x)))
+mat_cluster_cols <- hclust(dist(t(vsd_cor_Object)))
+mat_cluster_cols <- sort_hclust(mat_cluster_cols)
+mat_cluster_rows <- hclust(dist(vsd_cor_Object))
+mat_cluster_rows <- sort_hclust(mat_cluster_rows)
+## mark the batches
+annot_batch <- data.frame(batch = ifelse(test = targets$Batch == 'a',
+                                         yes = 'batch A',
+                                         no = 'batch B'))
+rownames(annot_batch) <- rownames(vsd_cor_Object)
+## get minimum correlation value, rounded for the legend
+bot <- ceiling(min(vsd_cor_Object)*100)/100
+## plot
+pheatmap(
+  # data
+    mat               = vsd_cor_Object,
+    scale             = "none", # otherwise numbers are changed
+    cellwidth         = 15,
+    cellheight        = 15,
+  # title
+    main              = main.title,
+    fontsize          = 14,
+    annotation        = dplyr::select(exptDesign, condition),
+  # rows
+    cluster_rows      = mat_cluster_rows,
+    treeheight_row    = 25, # default is 50
+    show_rownames     = TRUE,
+    labels_row        = rownames(exptDesign),
+    fontsize_row      = 9,
+    annotation_row    = annot_batch,
+  # cols
+    cluster_cols      = mat_cluster_cols,
+    treeheight_col    = 25,
+    show_colnames     = TRUE,
+    labels_col        = rownames(exptDesign),
+    fontsize_col      = 9,
+    angle_col         = 45,
+  # legends
+    legend_breaks     = c(bot, 1),
+  # tiles
+    color             = scico(255, palette='bamako'),
+    border_color      = 'grey80')
+```
+
+This is somewhat redundant with PCA but also makes sense, so we will save the `vsd_Object` for the descriptive visualisations.
+```{r save-pseudocounts}
+saveRDS(vsd_Object, 'output/vsd.RDS')
+```
+
+
+## 2.3 Visualise dispersion estimates
+
+
+This will normalise the data, correct for dispersion (variance between replicates) and set data up for a differential comparison of any 2 conditions:
+```{r analysis-object}
+analysisObject = DESeq(exptObject)
+```
+
+After fitting the data to a negative binomial model, some basic QC consists of plotting the dispersion estimates using the `plotDispEsts()` function. The dispersion estimates are used to model the raw counts, assuming (1) that dispersions will generally decrease with increasing mean, and (2) that they should more or less follow the fitted line.
+```{r plot-dispersion}
+plotDispEsts(analysisObject)
+```
+
+This seems reasonably in order, so we move on to saving the expression data for further visualisation and analysis, and Supplementary Data:
+```{r save-counts}
+rawCounts        <- as.data.frame(counts(analysisObject, normalized=FALSE))
+normalisedCounts <- as.data.frame(counts(analysisObject, normalized=TRUE))
+saveRDS(rawCounts, 'output/rawCounts.RDS')
+saveRDS(normalisedCounts, 'output/normalisedCounts.RDS')
+```
+
+
+## 2.4 Differential gene expression
+
+
+Loop over the experimental conditions and save `DESeq2::results` as RDS data:
+```{r get-dge, warning=FALSE}
+# to get a more informative naming for the samples:
+targets$sampleIDs <- names(rawCounts)
+# conditions to be tested
+test_conditions <- unique( targets[targets$Condition != 'Control',]$Condition )
+test_names <- paste0(rep('Control_vs_',length(test_conditions)),test_conditions)
+tests <- as.list(rep(NA, length(test_names)))
+names(tests) <- test_names 
+
+for (condtn in test_conditions) {
+  # get the Counts for those conditions
+  deData <- as.data.frame(results(analysisObject,
+                                  contrast=c("condition", condtn, 'Control'), # Reference goes last!
+                                  pAdjustMethod="BH"))
+  # add column of ID
+  deData <- cbind(data.frame('ensemblGeneID'=rownames(deData)), deData)
+  # sort by pval
+  deData <- deData[order(deData$pvalue), ] 
+  # add gene symbol column and reorder columns
+  deData <- merge(deData, dlist, by=0)
+  deData <- deData[,c(1,ncol(deData),2:(ncol(deData)-1))]
+  # save for later
+  saveRDS(deData, file=paste0("output/", 'Control_vs_', condtn, ".RDS"))
+  # save as Supplementary data for publication
+  cols <- c('gene_symbol', 'ensemblGeneID', 'log2FoldChange', 'padj')
+  rownames(deData) <- NULL
+  tests[[paste0('Control_vs_', condtn)]] <- deData %>% dplyr::select(all_of(cols))
+}
+```
+(Note that in the parameter `contrast`, `'Control'` is last - I cannot find formal justification of this, but even with the `relevel`ling of the `condition` column of the experimental design object to make 'Control' the reference level, this needs to go last, or the log~2~FC values will have the opposite sign.)
+
+
+### Supplementary Table S3
+
+
+Now we just need to write the adjusted p-values and the log~2~(fold changes). That, with the raw counts, should be enough for anyone to do their own 'light' analysis without having to get any files from GEO.
+```{r table-s3}
+# add `rawCounts` to `tests`
+tests <- rlist::list.append(tests, `Raw counts per gene per sample`=rawCounts)
+# Supplementary data for publication
+write_xlsx(tests, path = 'output/Table S3.xlsx')
+```
+
+Finally, to have the experimental designed captured in a flexible manner for later on:
+```{r save-targets}
+targets$condition_md <- plyr::mapvalues(
+  targets$Condition,
+  from=unique(targets$Condition),
+  to=c('*da^RNAi^*', '*da*', '*wild-type*', '*da:da*', '*scute*')
+  )
+targets$condition_md <- factor(
+  targets$condition_md,
+  c('*wild-type*', '*da*', '*da:da*','*da^RNAi^*', '*scute*')
+  )
+saveRDS(targets, 'output/targets.RDS')
+```

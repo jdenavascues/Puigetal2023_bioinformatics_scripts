@@ -1,0 +1,532 @@
+---
+title: "2. Visualisation of DESeq2 results"
+description: "PCA and clustered heatmap"
+principal investigator: "Joaquín de Navascués"
+researchers: "Aleix Puig-Barbé, Joaquín de Navascués"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: readable
+    df_print: paged
+    css: doc.css
+---
+```{r setup, echo=FALSE, cache=FALSE}
+ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+knitr::opts_chunk$set(dev = 'png', 
+                      fig.align = 'center', fig.height = 7, fig.width = 8.5, 
+                      pdf.options(encoding = "ISOLatin9.enc"),
+                      fig.path='notebook_figs/', warning=FALSE, message=FALSE)
+```
+
+
+# 1 Preparation
+
+
+**Libraries/utils:**
+```{r libraries, warning=FALSE, message=FALSE}
+if (!require("librarian")) install.packages("librarian")
+librarian::shelf(
+  # tidyverse
+  tibble, stringr, tidyr, purrr, dplyr,
+  # data other
+  reshape2, santoku, calibrate, readxl, writexl,
+  DESeq2, DescTools, matrixStats, 
+  # graphics
+  ggplot2, ggthemes, ggtext, ggrepel, ggpubr,
+  eulerr, RColorBrewer, cetcolor,
+  # convenience
+  here)
+
+if(!exists("ggmaplot2", mode="function")) source("utils.R")
+```
+
+**Set working directory:**
+```{r setwd}
+if (Sys.getenv("RSTUDIO")==1) {
+   # setwd to where the editor is, if the IDE is RStudio
+  setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
+} else {
+  # setwd to where the editor is in a general way - maybe less failsafe than the previous
+  setwd(here::here())
+  # the following checks that the latter went well, but assuming
+  # that the user has not changed the name of the repo
+  d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
+  if (d != 'RNAseq-EmcDaSc-adult_midgut') { stop(
+    paste0("Could not set working directory automatically to where this",
+           " script resides.\nPlease do `setwd()` manually"))
+    }
+}
+```
+
+**To save images outside the repo (to reduce size):**
+```{r define_dir2figs}
+figdir <- paste0(c(head(str_split(getwd(),'/')[[1]],-1),
+                   paste0(tail(str_split(getwd(),'/')[[1]],1), '_figures')),
+                 collapse='/')
+dir.create(figdir, showWarnings = FALSE)
+```
+
+
+# 2 RNAseq results visualisation: Principal Components Analysis
+
+
+## 2.1 Load and check expression data
+
+
+We have seen how batch correction is necessary to show a meaningful PCA. Of the different expression measures, vst-normalised data is the most reasonable to make comparisons across samples.
+```{r load-vst}
+targets <- readRDS('output/targets.RDS')
+vsd <- readRDS('output/vst_pseudocounts_batchCorrected.RDS')
+```
+
+When performing PCA on RNAseq data, it is often useful to filter genes with very low variance across experimental conditions. To test whether this makes sense in our case:
+```{r visualise-variance, warning=FALSE}
+# get per-gene variance and mean expression
+var_vsd <- rowVars(assay(vsd), rm.na=TRUE)
+avg_vsd <- rowMeans(assay(vsd))
+df <- data.frame(Variance=var_vsd, Mean=avg_vsd)
+# plot close to variance==0 with inset:
+p1 <- ggplot(df, aes(x=Variance, y=Mean)) +
+  geom_point(size=0.1, alpha=0.5, colour='#fe4b03') +
+  geom_vline(xintercept=0, colour='black', size=0.1)
+p2 <- ggplot(df, aes(x=Variance, y=Mean)) +
+  geom_point(alpha=0.1) + xlim(0,0.1) + ylim(5,20) +
+  theme(panel.background = element_rect(fill='grey90')) +
+  geom_vline(xintercept=0, colour='#02ccfe')
+p1 + annotation_custom(ggplotGrob(p2),
+                       xmin=5, xmax=12,
+                       ymin=5, ymax=25)
+```
+
+Some genes have very low variance (which is the whole point of the `vst` transformation), but none of them are zero.
+There seems to be little point in drawing an arbitrary threshold, so I move on with the whole dataset.
+
+## 2.2 PCA plot
+
+```{r}
+pca <- prcomp(t(assay(vsd)), center=TRUE)
+scores <- data.frame(targets$sampleIDs, pca$x[,1:2])
+xtitle <- paste0('**PC1** (', round(summary(pca)$importance['Proportion of Variance','PC1']*100,1), ' %)')
+ytitle <- paste0('**PC2** (', round(summary(pca)$importance['Proportion of Variance','PC2']*100,1), ' %)')
+ptitle <- 'Principal component scores' 
+stitle <- '(*vst* pseudocounts, batch-corrected)'
+
+ggplot(scores,
+       aes(x = PC1, y = PC2,
+           label=factor(targets$sampleIDs),
+           colour=factor(targets$condition_md) )
+       ) +
+  # data
+  geom_vline(xintercept=0, linetype='dashed', colour='grey60', linewidth=0.5) +
+  geom_hline(yintercept=0, linetype='dashed', colour='grey60', linewidth=0.5) +
+  geom_point(size=4) +
+  geom_point(size=2, colour='white', alpha=0.5) + 
+  geom_text_repel(size=4, alpha=0.75,
+                  max.overlaps=Inf,
+                  seed=42,
+                  force=0.3, force_pull=1, 
+                  box.padding=1, point.padding=0.5) +
+  lims(x= c(-100, 150), y = c(-80, 80)) +
+  # decorations
+  theme_minimal(base_size=16) +
+  labs(x=xtitle,
+       y=ytitle,
+       title=ptitle,
+       subtitle=stitle) +
+  scale_colour_discrete(name="condition") +
+  theme(legend.text = element_markdown(size=10),
+        axis.title.x = element_markdown(),
+        axis.title.y = element_markdown(),
+        plot.title = element_text(hjust=0.5),
+        plot.subtitle = element_markdown(hjust=0.5, color="grey40"),
+        axis.text.x = element_text(color="grey60"),
+        axis.text.y = element_text(color="grey60"),
+        axis.ticks.x = element_line(linewidth=0.5, linetype = "solid", color="grey60"),
+        axis.ticks.y = element_line(linewidth=0.5, linetype = "solid", color="grey60"),
+        axis.ticks.length=unit(-0.25, "cm"),
+        panel.border = element_rect(linewidth=1, linetype = "solid", fill = NA),
+        panel.grid = element_blank())
+
+ggsave('PCA_vsd_batchcorr.pdf', plot = last_plot(), device = 'pdf',
+       path = figdir, dpi = 300)
+```
+
+
+# 3 RNAseq results visualisation: Euler diagrams
+
+
+To visualise the degree of overlap and independence of the differentially expressed gene sets, I tried both Venn diagrams and UpSet plots in different colourmaps and spatial organisations. Having four genetic conditions made them all too complicated to grasp any pattern at a glance, so I turned to Euler diagrams. These have the advantage of capturing the size of sets and their intersections in the area of the circles and their overlaps, but the disadvantage of doing so only _approximately_. However, this is a very minor problem that does not affect the message.
+
+
+# 3.1 Prepare data
+
+```{r load-dge}
+# experimental design and labels
+targets <- readRDS('output/targets.RDS')
+# DEG data
+DaDaOE_deg <- readRDS('output/Control_vs_DaDaOE.RDS')
+DaKD_deg <- readRDS('output/Control_vs_DaKD.RDS')
+DaOE_deg <- readRDS('output/Control_vs_DaOE.RDS')
+ScOE_deg <- readRDS('output/Control_vs_ScOE.RDS')
+# gene symbols
+dlist <- read.table(file="resources/gene_symbols.txt", header=TRUE)
+names(dlist)[[1]] <- 'ensembl_gene_id'
+rownames(dlist) <- dlist$ensembl_gene_id
+```
+
+
+Now, for each condition, we will need to get the lists of misregulated genes for a given threshold of fold change:
+```{r extract_regulated_sets, warning = FALSE}
+list_of_degs <- list(DaKD_deg, DaOE_deg, DaDaOE_deg, ScOE_deg)
+names_degs <- list('daRNAi', 'da', 'da:da', 'scute')
+fc_thresh <- 1.5
+regs <- extract_regulated_sets(list_of_degs, names_degs, fc_thresh=fc_thresh)
+# attach the results to the DEG data frame for each condition, to be used later
+DaKD_deg$reg <- regs$daRNAi
+DaOE_deg$reg <- regs$da
+DaDaOE_deg$reg <- regs$`da:da`
+ScOE_deg$reg <- regs$scute
+
+regs[500:504,]
+```
+
+Now we need to turn this into logicals:
+```{r extract_up|down}
+upreg   <- get_deg_logical(regs,'up')
+downreg <- get_deg_logical(regs,'down')
+```
+
+
+# 3.2 Plot diagrams
+
+
+Using instructions from the [vignette](https://cran.r-project.org/web/packages/eulerr/vignettes/introduction.html):
+```{r euler_plots, results='hide'}
+up_colours <- c(
+  brewer.pal(9,'BrBG')[3],   # daRNAi   brown
+  brewer.pal(9,'YlOrBr')[4], # daOVEX   yellow/orange
+  brewer.pal(9,'Reds')[5],   # dadaOVEX red
+  brewer.pal(9,'PuRd')[3]    # scOVEX   violet
+)
+down_colours <- c(
+  brewer.pal(11,'PRGn')[8],  # daRNAi   green
+  brewer.pal(11,'RdYlBu')[8], # daOVEX   pale blue
+  brewer.pal(11,'RdBu')[9],  # dadaOVEX blue
+  brewer.pal(9,'Purples')[5]     # scOVEX   purple
+)
+upfit <- euler(upreg, loss = 'region', loss_aggregator = 'max')
+downfit <- euler(downreg, loss = 'region', loss_aggregator = 'max')
+upplot <- plot(upfit,
+               fill = up_colours,
+               quantities = TRUE)
+downplot <- plot(downfit,
+                 fill = down_colours,
+                 quantities = TRUE)
+# save it
+pdf(file=paste0(figdir,'/euler_up.pdf'),
+     width=10, height=12)
+upplot
+dev.off()
+
+pdf(file=paste0(figdir,'/euler_down.pdf'),
+     width=10, height=12)
+downplot
+dev.off()
+
+print(upplot)
+print(downplot)
+```
+
+
+# 4 RNAseq results visualisation: MA plots
+
+
+We use M (log ratio) and A (mean average) plots to have an overview of the distribution of differential gene expression data. Alongside this, it would be informative to visualise where some individual marker genes lie within the distribution, so we describe next how the list of marker genes was selected.
+
+
+## 4.1 List of marker genes
+
+The aim is to have a list of genes that could serve as cell type _exclusive_ markers. We will only consider a simplified cell type classification: ISC, EB, EE, EC of the adult posterior midgut. They must be either expressed exclusively in a cell type (e.g. _Delta_), or functionally promote one cell type only (e.g. _phyllopod_). We start with a curated list  and the markers defined by the Fly Cell Atlas consortium. Then we will remove redundancy.
+
+- Curated markers:
+
+```{r load_GOI, message=FALSE}
+genes_of_interest <- read_excel('resources/genes_of_interest.xlsx', sheet='gene_table') %>%
+  dplyr::select(gene_symbol, bonafide_celltype) %>%
+  filter(bonafide_celltype != 'NA') %>%
+  dplyr::rename(celltype = bonafide_celltype) %>%
+  group_by(celltype) %>%
+  dplyr::summarise(gene_symbol=paste(gene_symbol, collapse=', '))
+genes_of_interest
+```
+
+- FCA markers:
+
+```{r loadFCA, message=FALSE}
+markers <- read_xlsx(file.path(getwd(), 'resources', 'science.abk2432_table s2.xlsx')) %>%
+  # get only the gut epithelium/muscle cell types
+  filter(Tissue=='gut' | `Annotation...1`=='enteroendocrine cell') %>%
+  # remove a hybrid/transitional cell type
+  filter(!str_detect(`Annotation...1`, 'differentiating')) %>%
+  # remove muscle/artefact cells
+  filter(!str_detect(`Broad annotation`, 'muscle|artefact')) %>%
+  # get just the columns with marker names
+  dplyr::select(contains(c('Annotation...1', 'Marker'))) %>%
+  # join all markers in a new column
+  unite(gene_symbol, contains('Markers'), sep = ', ')
+names(markers)[[1]] <- 'celltype'
+markers
+```
+
+- Merge markers:
+
+```{r merge_markers, message=FALSE}
+# some markers are spelled differently in the Fly Cell Atlas and our genome annotation:
+missd.spelld <- c(`wntD, `='', `LManIV, `='', `CG31269, `='', `CG43208, `='', `orcokinin B, `='',
+                   AstB='Mip', poxn='Poxn')
+markers <- rbind(genes_of_interest, markers) %>%
+  # merge same cell type markers
+  group_by(celltype) %>%
+  dplyr::summarise(gene_symbol=paste(gene_symbol, collapse=', ')) %>%
+  # correct difference in synonym/capitalisation with DEG data...
+  # ... while all gene symbols are in one string
+  dplyr::mutate(gene_symbol = str_replace_all(gene_symbol, missd.spelld)) %>%
+  # make each gene name an independent string
+  rowwise() %>% dplyr::mutate(markers = list(unique(str_split(gene_symbol, ', ')[[1]])))
+markers
+```
+
+- Filter non-cell type-exclusive markers
+
+```{r filter_markers, message=FALSE}
+# filter by exclusivity, but keeping what is common to all enterocytes
+## first identify all EC markers
+ECmarkers <- markers %>%
+  filter(str_detect(celltype, 'enterocyte')) %>%
+  dplyr::select(markers) %>%
+  unlist(use.names = FALSE) %>%
+  unique() %>% as.list()
+## then non-EC cell markers, with all their repetitions!!
+nonECmarkers <- markers %>%
+  filter(!str_detect(celltype, 'enterocyte')) %>%
+  dplyr::select(markers) %>%
+  unlist(use.names = FALSE) %>% as.list()
+## get all markers with one occurrence (≠unique!)
+repmarkers <- unlist(c(ECmarkers, nonECmarkers))
+reps <- rle(sort(repmarkers))
+xmarkers <- reps$values[reps$lengths==1]
+## apply criterion of exclusivity
+exclude <- function(x) x[x %in% xmarkers]
+markers <- markers %>%
+    dplyr::mutate(exclusive = list(exclude(markers)))
+pmgcelltypes <- c('intestinal stem cell', 'enteroblast', 'enteroendocrine cell', 'enterocyte of posterior adult midgut epithelium')
+pmg.markers <- markers %>%
+  filter(celltype %in% pmgcelltypes) %>%
+  dplyr::select(c(1,4)) %>%
+  dplyr::rename(xmarkers = exclusive)
+pmg.markers
+```
+
+- Add cell type colours HEX codes
+
+```{r colour_markers}
+write_xlsx(unnest_longer(pmg.markers, xmarkers) %>%
+    dplyr::rename(gene_symbol = xmarkers),
+    path = 'output/preliminary_Table S4.xlsx')
+cellcolours <- c('EB'='#56B2E9', 'EC'='#009E73', 'EE'='#CC79A7', 'ISC'='#D55E00')
+pmg.markers$cellcolour <- cellcolours
+```
+
+
+## 4.2 MA plots using `ggpubr::ggmaplot` wrappers
+
+
+#### MA plot for *daughterless* knockdown
+
+```{r ggmaplot2_da_knockdown}
+repulsion <- list(box.padding = 0.1,
+                  point.padding = 0.8,
+                  nudge_x = 3,
+                  nudge_y = 2,
+                  force = 1,
+                  force_pull = 0,
+                  seed.up = 42,
+                  seed.dn = 50,
+                  xlims.up = c(14, NA),
+                  ylims.up = c(5, NA),
+                  xlims.dn = c(18, NA),
+                  ylims.dn = c(NA, -1))
+
+ggmaplot2(deg = DaKD_deg,
+          fc_thresh = fc_thresh,
+          markers = pmg.markers,
+          md_label = '*esg > da^RNAi^*',
+          repulsion = repulsion)
+```
+
+Now with cell type-specific colours:
+```{r ggmaplot3_da_kd}
+repulsion <- list(box.padding = 0.08,
+                  point.padding = 0.1,
+                  nudge_x = 0,
+                  nudge_y = 0,
+                  force = 1,
+                  force_pull = -0.004,
+                  seed.up = 42,
+                  seed.dn = 5,
+                  xlims.up = c(12, NA),
+                  ylims.up = c(5.5, NA),
+                  xlims.dn = c(16, NA),
+                  ylims.dn = c(NA, -1))
+
+ggmaplot3(deg = DaKD_deg,
+          fc_thresh = fc_thresh,
+          markers = pmg.markers, 
+          md_label = '*esg > da^RNAi^*',
+          repulsion = repulsion)
+
+
+suppressMessages(ggsave('MA_daKD.pdf', plot = last_plot(), device = 'pdf',
+                        path = figdir, dpi = 300))
+```
+
+#### MA plot for *daughterless* overexpression
+
+```{r ggmaplot3_da_overexpression}
+repulsion <- list(box.padding = 0.1,
+                  point.padding = 0.1,
+                  force = 1.5,
+                  force_pull = -0.003,
+                  nudge_x.up = 0,
+                  nudge_y.up = 0,
+                  nudge_x.dn = 0,
+                  nudge_y.dn = 0,
+                  seed.up = 42,
+                  seed.dn = 5,
+                  xlims.up = c(12, NA),
+                  ylims.up = c(5, NA),
+                  xlims.dn = c(16, NA),
+                  ylims.dn = c(NA, -1))
+
+ggmaplot3(deg = DaOE_deg,
+          fc_thresh = fc_thresh,
+          markers = pmg.markers, 
+          md_label = '*esg > da*',
+          repulsion = repulsion)
+
+suppressMessages(ggsave('MA_daOE.pdf', plot = last_plot(), device = 'pdf',
+                        path = figdir, dpi = 300))
+```
+
+#### MA plot for the overexpression of the Daughterless homodimer
+
+```{r ggmaplot2_da:da_overexpression}
+repulsion <- list(box.padding = 0.01,
+                  point.padding = 0.1,
+                  nudge_x = 0,
+                  nudge_y = 0,
+                  force = 1,
+                  force_pull = -0.004,
+                  seed.up = 42,
+                  seed.dn = 5,
+                  xlims.up = c(16, NA),
+                  ylims.up = c(3, NA),
+                  xlims.dn = c(16, NA),
+                  ylims.dn = c(NA, -2))
+
+ggmaplot3(deg = DaDaOE_deg,
+          fc_thresh = fc_thresh,
+          markers = pmg.markers, 
+          md_label = '*esg > da:da*',
+          repulsion = repulsion)
+
+suppressMessages(ggsave('MA_dadaOE.pdf', plot = last_plot(), device = 'pdf',
+                        path = figdir, dpi = 300))
+```
+
+#### MA plot for the _scute_ overexpression
+
+```{r ggmaplot2_sc_overexpression}
+repulsion <- list(box.padding = 0.01,
+                  point.padding = 0.1,
+                  nudge_x = 0,
+                  nudge_y = 0,
+                  force = 0.7,
+                  force_pull = -0.003,
+                  seed.up = 42,
+                  seed.dn = 5,
+                  xlims.up = c(8, NA),
+                  ylims.up = c(7, NA),
+                  xlims.dn = c(8, NA),
+                  ylims.dn = c(NA, -6))
+
+ggmaplot3(deg = ScOE_deg,
+          fc_thresh = 2,
+          markers = pmg.markers,
+          md_label = '*esg > scute*',
+          repulsion = repulsion)
+
+suppressMessages(ggsave('MA_ScOE.pdf', plot = last_plot(), device = 'pdf',
+                        path = figdir, dpi = 300))
+```
+
+
+# 5 Heatmaps of individual genes
+
+
+It is useful to have a representation of the magnitude of the expression changes across samples of a group of genes. Heatmaps seem the best option, provided there is also a representation of whether the changes are statistically significant. To do this, I use a wrapper of _pretty heatmap_ package main function, `pheatmap`, to draw significance-coloured asterisks as a 2nd layer of information.
+
+
+## 5.1 Heatmap of cell type-exclusive markers
+
+
+```{r xmarkers-heatmap, fig.width=20}
+# get genes of interest (cell type exclusive markers, in this case) in tidy form
+tidy.markers <- pmg.markers %>% unnest_longer(xmarkers) %>%
+  dplyr::rename(gene_symbol = xmarkers)
+# add markdown description of genotype
+DaKD_deg$condition <- '*da^RNAi^*'
+DaOE_deg$condition <- '*da*'
+DaDaOE_deg$condition <- '*da:da*'
+ScOE_deg$condition <- '*scute*'
+# get all the information needed in a df
+genehm.df <- bind_rows(ScOE_deg, DaDaOE_deg, DaOE_deg, DaKD_deg) %>%
+  dplyr::select(ensemblGeneID, gene_symbol, log2FoldChange, padj, condition) %>%
+  dplyr::rename(p.adjust = padj) %>%
+  filter(gene_symbol %in% tidy.markers$gene_symbol) %>%
+  merge(., tidy.markers, by = 'gene_symbol') %>%
+  dplyr::mutate(condition = factor(condition, levels=c("*scute*", "*da:da*", "*da*", "*da^RNAi^*")))
+# pass df to pheatmap wrapper
+p <- layer.heatmaph(genehm.df, arr='celltype')
+p + geom_hline(aes(yintercept=3.5), linewidth = 0.5) +
+  theme(plot.margin = margin(r = 25))
+```
+
+This arrangement is more informative:
+```{r xmarkers-heatmap-vertical, fig.height = 20}
+p <- layer.heatmapv(genehm.df, cluster=TRUE)
+p + geom_vline(aes(xintercept=3.5), linewidth = 0.5)
+suppressMessages(ggsave('marker_heatmap.pdf', plot = last_plot(), device = 'pdf',
+                        path = figdir, dpi = 300))
+```
+
+
+## 5.1 Heatmap of the _Enhancer of split_-Complex genes
+
+
+```{r E(spl)C-heatmap}
+# prepare data
+Espl.df <- bind_rows(ScOE_deg, DaDaOE_deg, DaOE_deg, DaKD_deg) %>%
+  dplyr::select(ensemblGeneID, gene_symbol, log2FoldChange, padj, condition) %>%
+  dplyr::rename(p.adjust = padj) %>%
+  filter(grepl("^E\\(spl\\)", gene_symbol)) %>%
+  dplyr::mutate(condition = factor(condition, levels=c("*scute*", "*da:da*", "*da*", "*da^RNAi^*"))) %>%
+  dplyr::mutate(cellcolour = "#000000")
+# plot
+p <- layer.heatmapv(Espl.df, cluster=TRUE)
+p + geom_vline(aes(xintercept=3.5), linewidth = 0.5)
+suppressMessages(ggsave('Esplit_heatmap.pdf', plot = last_plot(), device = 'pdf',
+                        path = figdir, dpi = 300))
+```

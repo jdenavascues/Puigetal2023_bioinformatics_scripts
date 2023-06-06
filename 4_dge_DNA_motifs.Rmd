@@ -1,0 +1,569 @@
+---
+title: "4. DNA motif enrichment in differentially expressed genes"
+description: "RCisTarget analysis of DEGs"
+principal investigator: "Joaquín de Navascués"
+researchers: "Joaquín de Navascués"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: readable
+    df_print: paged
+    css: doc.css
+---
+```{r setup, echo=FALSE, cache=FALSE}
+ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+knitr::opts_chunk$set(dev = 'png', 
+                      fig.align = 'center', fig.height = 7, fig.width = 8.5, 
+                      pdf.options(encoding = "ISOLatin9.enc"),
+                      fig.path='notebook_figs/', warning=FALSE, message=FALSE)
+```
+
+
+# 1 Preparation
+
+
+**Libraries/utils:**
+```{r libraries, warning=FALSE, message=FALSE}
+if (!require("librarian")) install.packages("librarian")
+librarian::shelf(
+  # tidyverse
+  dplyr, stringr, tidyr, rlang,
+  # data
+  data.table, DT, RcisTarget,
+  # plotting
+  ggtheme, ggtext, ggrepel, RColorBrewer, cetcolor, hrbrthemes,
+  # convenience
+  here)
+
+if(!exists("gseCP_summarise", mode="function")) source("utils.R")
+```
+
+**Set working directory:**
+```{r setwd}
+if (Sys.getenv("RSTUDIO")==1) {
+   # setwd to where the editor is, if the IDE is RStudio
+  setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
+} else {
+  # setwd to where the editor is in a general way - maybe less failsafe than the previous
+  setwd(here::here())
+  # the following checks that the latter went well, but assuming
+  # that the user has not changed the name of the repo
+  d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
+  if (d != 'RNAseq-EmcDaSc-adult_midgut') { stop(
+    paste0("Could not set working directory automatically to where this",
+           " script resides.\nPlease do `setwd()` manually"))
+    }
+}
+```
+
+**To save images outside the repo (to reduce size):**
+```{r define_dir2figs}
+figdir <- paste0(c(head(str_split(getwd(),'/')[[1]],-1),
+                   paste0(tail(str_split(getwd(),'/')[[1]],1), '_figures')),
+                 collapse='/')
+dir.create(figdir, showWarnings = FALSE)
+```
+
+
+# 2 Identification of enriched DNA binding motifs in DEGs
+
+
+## 2.1 Load the data
+
+
+#### Differential gene expression data
+
+This gets us the DGE data from `DESeq2`, identified by FlyBase/Ensembl ID and gene symbol:
+```{r load_DEG_data}
+# DEG data
+DaKD_deg <- readRDS('output/Control_vs_DaKD.RDS')
+DaOE_deg <- readRDS('output/Control_vs_DaOE.RDS')
+DaDaOE_deg <- readRDS('output/Control_vs_DaDaOE.RDS')
+ScOE_deg <- readRDS('output/Control_vs_ScOE.RDS')
+```
+
+Gene sets of up/down-regulated in our experiments for a given fold-change threshold `fc_thresh`:
+```{r get_degs}
+# gene list by condition and up/downregulated
+geneLists <- list(
+  daRNAi_dn = make_degset(DaKD_deg, up=FALSE, fc_thresh=1.5)$gene_symbol,
+  daRNAi_up = make_degset(DaKD_deg, up=TRUE, fc_thresh=1.5)$gene_symbol,
+  daOE_dn = make_degset(DaOE_deg, up=FALSE, fc_thresh=1.5)$gene_symbol,
+  daOE_up = make_degset(DaOE_deg, up=TRUE, fc_thresh=1.5)$gene_symbol,
+  dadaOE_dn = make_degset(DaDaOE_deg, up=FALSE, fc_thresh=1.5)$gene_symbol,
+  dadaOE_up = make_degset(DaDaOE_deg, up=TRUE, fc_thresh=1.5)$gene_symbol,
+  scOE_dn = make_degset(ScOE_deg, up=FALSE, fc_thresh=1.5)$gene_symbol,
+  scOE_up = make_degset(ScOE_deg, up=TRUE, fc_thresh=1.5)$gene_symbol
+)
+```
+
+#### DNA motif databases
+
+To run `RCisTarget` I need two databases (motif Rankings and Annotations). The [Stein Aerts' lab website](https://resources.aertslab.org/cistarget/) has both of them available for the _D. melanogaster_ release 6.02:
+
+- Version 8 "new":
+
+  - [Motif rankings `.feather` file v8](https://resources.aertslab.org/cistarget/databases/drosophila_melanogaster/dm6/flybase_r6.02/mc8nr/gene_based/dm6-5kb-upstream-full-tx-11species.mc8nr.genes_vs_motifs.rankings.feather) (782Mb) 
+  - [Motif annotation table file v8](https://resources.aertslab.org/cistarget/motif2tf/motifs-v8-nr.flybase-m0.001-o0.0.tbl) (40Mb)
+
+- Version 10:
+
+  - [Motif rankings `.feather` file v10](https://resources.aertslab.org/cistarget/databases/drosophila_melanogaster/dm6/flybase_r6.02/mc_v10_clust/gene_based/dm6_v10_clust.genes_vs_motifs.rankings.feather) (47Mb) 
+  - [Motif annotation table file v10](https://resources.aertslab.org/cistarget/motif2tf/motifs-v10nr_clust-nr.flybase-m0.001-o0.0.tbl) (69Mb)
+
+
+Download the different motif Annotations (mA) and motif Rankings (mR)
+```{r get_motif_db}
+# define URLs
+rkURLbase <- paste0('https://resources.aertslab.org/cistarget/databases/',
+                   'drosophila_melanogaster/dm6/flybase_r6.02')
+rk_v8_url <- paste0(rkURLbase, '/mc8nr/gene_based/',
+                   'dm6-5kb-upstream-full-tx-11species.mc8nr.genes_vs_motifs.rankings.feather')
+an_v8_url <- paste0('https://resources.aertslab.org/cistarget/motif2tf/',
+                    'motifs-v8-nr.flybase-m0.001-o0.0.tbl')
+rk_v10_url <- paste0(rkURLbase, '/mc_v10_clust/gene_based/',
+                     'dm6_v10_clust.genes_vs_motifs.rankings.feather')
+an_v10_url <- paste0('https://resources.aertslab.org/cistarget/motif2tf/',
+                     'motifs-v10nr_clust-nr.flybase-m0.001-o0.0.tbl')
+
+# establish the resource sub-directory
+motifpath <- paste0(getwd(), "/resources/motifdbs")
+if (!dir.exists( motifpath )) dir.create(motifpath)
+
+# read (or download, if the first time) the rankings and annotations 
+tryCatch(
+  { motif_annotations_dm6_v8 <- readRDS(paste0(motifpath, "/motif_annotations_dm6_v8.RDS")) },
+  error = function(e) {
+    message(e)
+    message('\n"motif_annotations_dm6_v8" is not available locally -- it will be downloaded and saved.')
+    motif_annotations_dm6_v8 <- importAnnotations(an_v8_url)
+    saveRDS(motif_annotations_dm6_v8, paste0(motifpath, "/motif_annotations_dm6_v8.RDS"))
+    }
+)
+tryCatch(
+  { options(timeout = max(600, getOption("timeout")))
+    motif_rankings_dm6_v8 <- readRDS(paste0(motifpath, "/motif_rankings_dm6_v8.RDS")) },
+  error = function(e) {
+    message('\n"motif_rankings_dm6_v8" is not available locally -- it will be downloaded and saved.\n\n')
+    message(e)
+    # timeout is in seconds, and may depend on the connection:
+    options(timeout = max(1500, getOption("timeout")))
+    # tried tempfile(), didn't work
+    destfile <- paste0(motifpath, 'motif_rankings_dm6_v8.feather')
+    download.file(url = rk_v8_url,
+                  destfile = destfile,
+                  mode='wget')
+    motif_rankings_dm6_v8 <- importRankings(destfile)
+    file.remove(destfile)
+    saveRDS(motif_rankings_dm6_v8, paste0(motifpath, "/motif_rankings_dm6_v8.RDS"))
+    }
+)
+tryCatch(
+  { motif_annotations_dm6_v10 <- readRDS(paste0(motifpath, "/motif_annotations_dm6_v10.RDS")) },
+  error = function(e) {
+    message(e)
+    message('\n"motif_annotations_dm6_v10" is not available locally -- it will be downloaded and saved.')
+    motif_annotations_dm6_v10 <- importAnnotations(an_v10_url)
+    saveRDS(motif_annotations_dm6_v10, paste0(motifpath, "/motif_annotations_dm6_v10.RDS"))
+    }
+)
+tryCatch(
+  { motif_rankings_dm6_v10 <- readRDS(paste0(motifpath, "/motif_rankings_dm6_v10.RDS")) },
+  error = function(e) {
+    message('\n"motif_rankings_dm6_v10.RDS" is not available locally -- it will be downloaded and saved.\n\n')
+    message(e)
+    options(timeout = max(1500, getOption("timeout")))
+    destfile <- paste0(motifpath, 'motif_rankings_dm6_v10.feather')
+    download.file(url = rk_v10_url,
+                  destfile = destfile,
+                  mode='wget')
+    motif_rankings_dm6_v10 <- importRankings(destfile)
+    file.remove(destfile)
+    saveRDS(motif_rankings_dm6_v10, paste0(motifpath, "/motif_rankings_dm6_v10.RDS"))
+    }
+)
+# place last column first, as RcisTarget assumes that is the position of the motif names
+motif_rankings_dm6_v10@rankings <- dplyr::relocate(motif_rankings_dm6_v10@rankings, motifs)
+motif_rankings_dm6_v8@rankings <- dplyr::relocate(motif_rankings_dm6_v8@rankings, motifs)
+```
+
+
+## 2.2 Perform motif enrichment with `RcisTarget`
+
+
+### 2.2.1 Match motif databases: rankings and annotations
+
+The way the motif databases are organised at the Stein Aerts' lab resource website, it seems that each version of the motif rankings database should be used with their corresponding annotation database. However, the [`RCisTarget` manual](https://bioconductor.org/packages/release/bioc/manuals/RcisTarget/man/RcisTarget.pdf) states that "[The] annotation database [...] motif [...] names should match the ranking column names." To explore what is the best option, I want to see how many motifs are there per database:
+```{r}
+motif.table <- data.frame(
+  motif_annot = c(length(unique(motif_annotations_dm6_v8$motif)), length(unique(motif_annotations_dm6_v10$motif))),
+  motif_ranks = c(nrow(motif_rankings_dm6_v8), nrow(motif_rankings_dm6_v10))
+)
+rownames(motif.table) <- c('8new', '10cls')
+motif.table
+```
+
+It seems that the combination with more possibilities is to match the v8 motif ranks with the v10 annotation. Moreover, we will see later that the motif annotations is richer if we combine the two anotation databases. So I will run `RCisTarget` once with the two db in version 8, and one with a v8 rank and v10 annotation.
+
+Let's see what we get with a simple comparison:
+```{r}
+# tryCatch statements are for reading the saved results
+# instead of calculating again, in case I want to re-run the script
+## "pure" v8 enrichment
+tryCatch(
+  { motrich_pure8 <- readRDS(paste0(getwd(), "/output", "/motrich_pure8.RDS")) },
+  error = function(e) {
+    motrich_pure8 <- cisTarget(geneLists, motif_rankings_dm6_v8, motifAnnot = motif_annotations_dm6_v8)
+    saveRDS(motrich_pure8, paste0(getwd(), "/output", "/motrich_pure8.RDS"))
+    }
+)
+## "hybrid" v8/v10 enrichment
+tryCatch(
+  { motrich_hybr8 <- readRDS(paste0(getwd(), "/output", "/motrich_hybr8.RDS")) },
+  error = function(e) {
+    motrich_hybr8 <- cisTarget(geneLists, motif_rankings_dm6_v8, motifAnnot = motif_annotations_dm6_v10)
+    saveRDS(motrich_hybr8, paste0(getwd(), "/output", "/motrich_hybr8.RDS"))
+    }
+)
+```
+
+Now let us make sure that this is sound. We can test that the motif enrichment generated is exactly the same:
+```{r test_motif_ids}
+# are the columns listing the motif names identical?
+all(motrich_hybr8$motif == motrich_pure8$motif)
+```
+
+And we can also see that even the enrichment values are exactly the same for every motif:
+```{r test_motif_nes}
+# are the enrichment score columns identical?
+all(motrich_hybr8$NES == motrich_pure8$NES)
+```
+
+Therefore, the only difference between the using the version 8 or 10 of the annotations is the nature of these, and in particular the association of motifs with their binding transcription factors:
+```{r motif_annot_comparison, message=FALSE, cols.print=3}
+head(
+  # combine the columns of both lists of motifs
+  # their rows will be naturally aligned, as the motif ranking is the same
+  dplyr::bind_cols(motrich_pure8, motrich_hybr8) %>%
+    # get the motif names and the annotations from both DBs
+    dplyr::select(2, c(starts_with('TF_highConf'))),
+  15)
+```
+
+It provides more information to merge the annotations, and since v8 has not been retired, it is safe to assume that it is not misleading to use it.
+
+### 2.2.2 Associate motifs with TF class
+
+#### Merge motif annotations v8 and v10
+
+On inspection of the results, most of the information is contained in the 'pure v8' dataframe, whereas the 'hybrid v8-v10' is mostly redundant - but not fully. So I will simply merge them (the connection between motifs and TFs should not depend on how the databases were assembled and the criteria for inclusion is the same).
+```{r merge-enriched-motif-annotations}
+motrich <- motrich_pure8 %>%
+  # select only the data I am interested in from the pure v8 enrichment analysis
+  dplyr::select(-c(TF_lowConf, rankAtMax, nEnrGenes)) %>%
+  # add the data from the hybrid v8-v10 analysis
+  tibble::add_column(TF_highConf2 = motrich_hybr8$TF_highConf) %>%
+  # remove trailing '. 's and remove source evidence clarifications between brackets
+  mutate( across(contains('TF_highConf'), ~ str_remove_all(., " \\(.+\\)|\\. |\\.")) ) %>%
+  mutate( across(contains('TF_highConf'), ~ str_remove(., " $")) ) %>%
+  # merge v8 / v10 annotations
+  unite('TFs', contains('TF_highConf'), sep = "; ") %>%
+  # remove piloting/trailing separators
+  mutate(TFs = str_remove(TFs, "^; |; $")) %>%
+  # split TF names in individual strings
+  mutate(TFs = str_split(TFs, '; '))
+# remove duplicate TFs
+motrich$TFs <- lapply(motrich$TFs, unique)
+head(motrich %>%
+       dplyr::select(c(motif, TFs)) %>%
+       rowwise() %>%
+       dplyr::mutate(TFs = paste(TFs, collapse=', ')),
+     15)
+```
+
+####  Match TFs with protein families
+
+**Download FlyBase Gene Groups**
+```{r, message=FALSE, warning=FALSE}
+geneg.source <- 'http://ftp.flybase.org/releases/FB2023_02/precomputed_files/genes/gene_group_data_fb_2023_02.tsv.gz'
+geneg <- data.table::fread(geneg.source)
+names(geneg)[[1]] <- 'FB_group_id'
+geneg <- geneg %>% dplyr::select( !contains('_id') )
+names(geneg) <- c('group_symbol', 'group_name', 'parent_symbol', 'gene_symbol')
+nrow(geneg); head(geneg)
+```
+
+Now we have a look at how the TFs in `geneg` and `motrich` match each other.
+
+**Find 'orphan' TFs**
+```{r get-unmatched-tfs}
+# unique TF names (excluding "") for motifs **without** a _Drosophila_ TF match
+detected.tfs <- unique(unlist(motrich$TFs))
+detected.tfs <- detected.tfs[ nchar(detected.tfs)>0 ]
+# TFs detected in RcisTarget but not present in the group member db:
+detected.tfs[!(detected.tfs %in% geneg$gene_symbol)]
+```
+
+Some of these gene symbols need a bit of a cleanup:
+
+- _h_ is the usual name for _hairy_, which in FB (and therefore in `geneg`) is called _hry_ `-|>` change name in `geneg`
+- _CG14440_ and _CG14442_ are homologs of human _ZNF821_, a ZF-C2H2 factor (DIOPT) `-|>` add annotation to `geneg`
+- _ocm_ is homolog of human _TBX22_, a T-BOX factor (DIOPT) `-|>` add annotation to `geneg`
+- _NK71_ I can't find it, except in this db from the Aerts'lab and a poster from the Stark's lab `-|>` remove from `motrich`
+
+Effect changes:
+```{r cleanup-tf-names}
+# add needed gene group annotations
+geneg <- geneg %>%
+  # change the symbol for _hairy_ from FB official 'hry' to standard 'h'
+  mutate(gene_symbol = str_replace(gene_symbol, "^hry$", "h")) %>%
+  # add ocm as a T-BOX gene
+  add_row(
+    geneg %>%
+      filter(str_detect(group_name, "T-BOX")) %>%
+      summarise(first(.)) %>%
+      mutate(gene_symbol='ocm')
+    ) %>%
+  # add CG14440 and CG14442 as ZF-C2H2 genes
+  bind_rows(
+    geneg %>%
+      filter(str_detect(group_name, "C2H2")) %>%
+      head(2) %>%
+      mutate(gene_symbol=c('CG14440', 'CG14442'))
+    )
+# now get rid of all genes that have not been recovered by RcisTarget
+geneg <- geneg %>%
+  filter(gene_symbol %in% detected.tfs)
+
+# to remove NK71 from the `motrich` TFs, it is better to retrace our steps:
+motrich$TFs <- lapply(motrich$TFs, \(x) str_remove(x, 'NK71'))
+```
+
+**Find multi-family TFs**
+```{r tfs-multiple-fams, cols.print=4}
+# TFs 'found' by RcisTarget with multiple gene group memberships:
+multifam <- lapply(detected.tfs, function(x) nrow(filter(geneg, gene_symbol==x)))>1
+geneg %>%
+  filter(gene_symbol %in% detected.tfs[multifam]) %>%
+  arrange(gene_symbol)
+```
+
+To clean this up, we can simply:
+
+- remove the gene group that does not have a parent symbol
+- that will leave us with _Abd-B_, _Myb_, _ham_, _pb_, _sr_, _toy_, _zfh1_
+
+Make gene-specific filters:
+```{r get-tfs-multifam}
+double_parent_genes <- geneg %>%
+  filter(gene_symbol %in% detected.tfs[multifam] & parent_symbol!='') %>%
+  filter(geneg %>%
+           filter(gene_symbol %in% detected.tfs[multifam] & parent_symbol!='') %>%
+           dplyr::select(gene_symbol) %>%
+           duplicated()
+         ) %>%
+  dplyr::select(gene_symbol)
+double_parent_genes <- sort(unlist(double_parent_genes))
+names(double_parent_genes) <- NULL
+double_parent_genes
+```
+
+**Apply corrections**
+```{r apply-multifam-corr}
+# discriminate manually ¯\_(ツ)_/¯ which row to keep:
+double_parent_symbol <- c("HOX-C", "KMT", "HTH", "HOX-C", "ULT", "HBTF", "ZN-TF")
+# apply changes
+geneg <- geneg %>%
+  # remove the group associations that are multiple and without a parent_symbol
+  filter( ! (gene_symbol %in% detected.tfs[multifam] & parent_symbol=='') ) %>%
+  # remove the specific associations
+  filter( !(gene_symbol==double_parent_genes[[1]] & parent_symbol==double_parent_symbol[[1]]) &
+          !(gene_symbol==double_parent_genes[[2]] & parent_symbol==double_parent_symbol[[2]]) &
+          !(gene_symbol==double_parent_genes[[3]] & parent_symbol==double_parent_symbol[[3]]) &
+          !(gene_symbol==double_parent_genes[[4]] & parent_symbol==double_parent_symbol[[4]]) &
+          !(gene_symbol==double_parent_genes[[5]] & parent_symbol==double_parent_symbol[[5]]) &
+          !(gene_symbol==double_parent_genes[[6]] & parent_symbol==double_parent_symbol[[6]]) &
+          !(gene_symbol==double_parent_genes[[7]] & parent_symbol==double_parent_symbol[[7]]) )
+```
+
+#### Associate TF class (Gene Group) to TFs from `RcisTarget`
+
+Now we can provide gene group symbols to the TFs from `RcisTarget`, which is more important than the identity of specific TFs.
+```{r}
+# for every list of TFs matched to a motif...
+motrich$TFclass <- lapply(motrich$TFs, \(x)
+  # ... get all the different TF classes corresponding to those TFs
+  unique( unlist( lapply( x, \(y) filter(geneg, gene_symbol==y)$group_symbol) ) )
+  )
+# how many TF Classes we have to plot:
+length(unique(unlist(motrich$TFclass)))
+```
+
+Thirty-three is too many - colour mapping them will be very confusing.
+
+**Select the main TF class per enriched motif**
+```{r}
+# before, I simply unnested `TFclass` to replicate motifs bound by different TF classes
+motrich$TFclass <- lapply(motrich$TFs, \(x)
+  # ... get all the TF classes corresponding to those TFs, **allowing repetition**
+  unique( unlist( lapply( x, \(y) filter(geneg, gene_symbol==y)$group_symbol) ) )
+  )
+# however I think this is misleading (e.g. some GATA boxes are also bound by Da, but this makes no sense to highlight)
+# So now I will get them all:
+motrich$TFclassRep <- lapply(motrich$TFs, \(x)
+  # ... get all the TF classes corresponding to those TFs, **allowing repetition**
+  unlist( lapply( x, \(y) filter(geneg, gene_symbol==y)$group_symbol) )
+  )
+# So now, for every list of TFclasses matched (repeatedly) to a motif...
+motrich$TFmainClass <- lapply(motrich$TFclassRep, \(x)
+  # ... get the most abundant one
+  sort(table(x), decreasing=TRUE)[1] |> names()
+  )
+# remove NULLs caused by character(0) in $TFs
+motrich$TFmainClass[ sapply(motrich$TFmainClass, is.null) ] <- ''
+length(unique(motrich$TFmainClass))
+```
+
+Thirty-one classes is still too much for the plot.
+
+**Coarse-grain the TF classes by hand**
+```{r}
+# to map `geneg` descriptions to better, less abundant names:
+name2largeclass <- list(
+"FORK HEAD BOX TRANSCRIPTION FACTORS" = 'FOX',
+"CBF DOMAIN TRANSCRIPTION FACTOR COMPLEX" = 'CBF',
+"TATA-BINDING PROTEIN AND TBP-RELATED FACTORS" = 'TBP/TBP-related',
+"NK-LIKE HOMEOBOX TRANSCRIPTION FACTORS" = 'Hbox',
+"BASIC LEUCINE ZIPPER TRANSCRIPTION FACTORS" = 'bZIP',
+"NUCLEAR RECEPTOR SUBFAMILY 0 (LIGAND-INDEPENDENT) TRANSCRIPTION FACTORS" = "NR",
+"HIGH MOBILITY GROUP BOX TRANSCRIPTION FACTORS" = "HMG",
+"SINE OCULIS HOMEOBOX TRANSCRIPTION FACTORS" = 'Hbox',
+"UNCLASSIFIED DNA BINDING DOMAIN TRANSCRIPTION FACTORS" = 'unclassified',
+"TEA DOMAIN TRANSCRIPTION FACTORS" = "TEAD",
+"MADS-BOX TRANSCRIPTION FACTORS" = "MADS",
+"SIRTUIN LYSINE DEACETYLASES" = 'SIRT',
+"WNT ENHANCEOSOME" = 'WNTE',
+"T-BOX TRANSCRIPTION FACTORS" = 'TBX',
+"NUCLEAR RECEPTOR (LIGAND-DEPENDENT) TRANSCRIPTION FACTORS" = "NR",
+"SANT-MYB DOMAIN TRANSCRIPTION FACTORS" = "SANT-MYB",
+"C2H2 ZINC FINGER TRANSCRIPTION FACTORS" = 'ZnF',
+"GATA TRANSCRIPTION FACTORS" = 'GATA',
+"BASIC HELIX-LOOP-HELIX TRANSCRIPTION FACTORS" = 'bHLH',
+"E2F TRANSCRIPTION FACTORS" = 'E2F',
+"GLIAL CELL MISSING TRANSCRIPTION FACTORS" = "GCM",
+"PAIRED-LIKE HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"NUCLEAR FACTOR - KAPPA B" = "NFkB",
+"POU HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"CUT HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"HOX-LIKE HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"ZINC FINGER HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"TALE HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"NUCLEAR FACTOR OF ACTIVATED T-CELLS TRANSCRIPTION FACTORS" = "NFAT",
+"LIM HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox",
+"ETS DOMAIN TRANSCRIPTION FACTORS" = "ETS",
+"GATOR2 COMPLEX" = "GAT2",
+"PAIRED HOMEOBOX TRANSCRIPTION FACTORS" = "Hbox"
+)
+# to map `geneg` descriptions with symbols
+class2name <- (geneg %>%
+  dplyr::select(group_symbol, group_name) %>%
+  distinct() %>% dplyr::select(group_name))[[1]]
+names(class2name) <- (geneg %>%
+  dplyr::select(group_symbol, group_name) %>%
+  distinct() %>% dplyr::select(group_symbol))[[1]]
+# apply to motrich
+## first get the NULLs in TFmainClass
+motrich <- motrich %>%
+  mutate(TFLargeClass = recode(unlist(TFmainClass), !!!class2name)) %>%
+  mutate(TFLargeClass = recode(unlist(TFLargeClass), !!!name2largeclass))
+length(unique(motrich$TFLargeClass))
+```
+
+Twenty-one is better, but I would like something like ~6-7 colours at most. So I will merge the groups with less than ~10 hits into one 'unclassified' group.
+
+**Further reduce the number of TF classes considered, by strength of representation**
+```{r}
+# enriched motif-binders for upregulated genes
+mots_up <- motrich %>%
+  dplyr::select(c(TFs, geneSet, NES, TFLargeClass)) %>%
+  filter(str_detect(geneSet, 'up'))
+mots_up$geneSet <- factor(mots_up$geneSet,
+                          levels=c("daRNAi_up", "daOE_up", "dadaOE_up", "scOE_up"),
+                          labels=c("*da^RNAi^*", "*da*", "*da:da*", "*scute*"))
+# enriched motif-binders for downregulated genes
+mots_dn <- motrich %>%
+  dplyr::select(c(TFs, geneSet, NES, TFLargeClass)) %>%
+  filter(str_detect(geneSet, 'dn'))
+mots_dn$geneSet <- factor(mots_dn$geneSet,
+                          levels=c("daRNAi_dn", "daOE_dn", "dadaOE_dn", "scOE_dn"),
+                          labels=c("*da^RNAi^*", "*da*", "*da:da*", "*scute*"))
+```
+
+Rank the classes of _enriched motif-binder TFs_ by representation. (Get the top five, )
+```{r}
+# top 5 enriched motif-binder classes in upregulated genes
+top5up <- mots_up %>%
+  dplyr::count(TFLargeClass) %>%
+  # remove '' and unclassified -- the latter have undue weight
+  filter(nchar(TFLargeClass)>1 & TFLargeClass!='unclassified') %>%
+  arrange(n) %>%
+  tail(5) %>%
+  select(TFLargeClass) %>% unlist()
+
+# group other classes into "Others"
+mots_up <- mots_up %>%
+  mutate(TFcla6 = if_else(TFLargeClass %in% top5up, TFLargeClass, 'Others'))
+mots_up$TFcla6 <- factor(mots_up$TFcla6, levels=c(rev(top5up), 'Others'))
+indices <- lapply(unique(mots_up$geneSet), \(x) nrow(filter(mots_up, geneSet==x)):1 )
+mots_up$index <- unlist(indices)
+
+# top 5 enriched motif-binder classes in downregulated genes
+top5dn <- mots_dn %>%
+  dplyr::count(TFLargeClass) %>%
+  filter(nchar(TFLargeClass)>1 & TFLargeClass!='unclassified') %>%
+  arrange(n) %>%
+  tail(5) %>%
+  select(TFLargeClass) %>% unlist()
+
+# group other classes into "Others"
+mots_dn <- mots_dn %>%
+  mutate(TFcla6 = if_else(TFLargeClass %in% top5dn, TFLargeClass, 'Others'))
+mots_dn$TFcla6 <- factor(mots_dn$TFcla6, levels=c(rev(top5dn), 'Others'))
+indices <- lapply(unique(mots_dn$geneSet), \(x) nrow(filter(mots_dn, geneSet==x)):1 )
+mots_dn$index <- unlist(indices)
+```
+
+### 2.2.3 Plot motif-associated TF classes
+
+The best representation I can think of is a categorical beeswarm plot that shows the NES value against the experimental condition, with the class of TF as colour.
+
+This involves:
+
+- binning the NES values, to ofpack the dots in the swarm (automated by `ggplot2::geom_dotplot`)
+- identifying some TFs of interest (_da_ and members of the _ac/sc-_ and _E(spl)-_ Complexes): the wrapper `class.swarm` does that.
+
+**For motifs in upregulated genes**:
+```{r dotplot_NES_TFclass, warning=FALSE, fig.width=5, fig.height=4}
+palette <- c( brewer.pal(12, 'Paired')[c(6, 8, 4, 2, 10)], '#CCCCCC' )
+dotparams <- list(binwidth=0.1, dotsize=1, alpha=1, stroke=0)
+texts <- list(x_label   = 'TFs linked to enriched motifs',
+              target_class = 'bHLH',
+              tfs.regex = c('da', 'sc', 'ase', 'E\\(spl\\)'),
+              tfs.var   = c('da', 'sc', 'ase', 'E(spl)'),
+              tfs.select = c('da', 'sc')) # this _must_ be 2 genes
+p <- class.swarm(mots_up, 'geneSet', 'TFs', 'NES', 'TFcla6', dotparams, palette, texts)
+p + ylim(2.5,10)
+ggsave(paste0(figdir, '/motifs_up_TFclass.pdf'))
+```
+
+**For motifs in downregulated genes**:
+```{r dotplot_NES_TFclass_2, warning=FALSE, fig.width=5, fig.height=4}
+palette <- c( brewer.pal(12, 'Paired')[c(8, 6, 2, 4, 10)], '#CCCCCC' )
+texts$tfs.select = c('da', 'E(spl)')
+p <- class.swarm(mots_dn, 'geneSet', 'TFs', 'NES', 'TFcla6', dotparams, palette, texts)
+p + ylim(2.5,10) +
+  theme(plot.margin = margin(r = 50))
+ggsave(paste0(figdir, '/motifs_down_TFclass.pdf'))
+```
