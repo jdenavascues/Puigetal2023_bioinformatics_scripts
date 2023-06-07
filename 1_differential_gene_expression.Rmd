@@ -105,27 +105,39 @@ write.table(dlist, file="resources/gene_symbols.txt", col.names=NA)
 ## 1.3 Load raw count data <span style="color: red;">GET FROM GEO</span>
 
 
+### 1.3.1 Download the pre-processed data
+
+The datasets are available in GEO. We can simply get a list of download URLs like this:
+```{r get-counts-geo}
+samples <- list('C3N4AACXX_1', 'C3N4AACXX_4', 'C3N4AACXX_9', 'C3N4AACXX_7',
+                'C3N4AACXX_11', 'C3N4AACXX_2', 'C3N4AACXX_6', 'C3N4AACXX_10',
+                'CON1', 'CON2', 'CON3', 'DA1', 'DA2', 'DA3', 'SCUTE1',
+                'SCUTE2', 'SCUTE3')
+ids <- paste0('GSM7441', 184:200)
+fore <- 'https://www.ncbi.nlm.nih.gov/geo/download/?acc='
+mid <- '&format=file&file='
+hind <- '.featurecount.txt.gz'
+urls <- paste0(fore, ids, mid, ids, '_', samples, hind)
+names(urls) <- ids
+```
+
 Read `featureCounts` results for all samples:
 ```{r load-raw-counts}
 # get experimental design data:
 targets <- read.table("input/targets.txt", header=TRUE, sep="\t")
+targets$GEOsample <- ids[match(targets$sampleID, samples)]
 # prepare to load gene count data
-zipfiles <- unzip("input/featurecounts.zip",list=TRUE)
-fcountf <- zipfiles$Name[ grepl('.featurecount$', zipfiles$Name) &
-                          !(grepl('^_', zipfiles$Name) )]
-
 rawData <- NULL
 # each column of rawData will contain the reads per gene of a sample
 counter <- 0
-for (fcf in targets$File) {
-  if (fcf %in% fcountf) {
-    fileContents <- read.table(unzip("input/featurecounts.zip", file=fcf), sep="\t", header=T)
-
-    } else { counter <- counter + 1 }
-  rawData <- cbind(rawData, fileContents[,7])
+for (geo in targets$GEOsample) {
+  connlink <- url( urls[ names(urls)==geo ] )
+  on.exit(close(connlink))
+  conn <- gzcon(connlink)
+  txt <- readLines(conn)
+  fileContents <- read.table(textConnection(txt), sep="\t", header=T)
+  rawData <- cbind(rawData, fileContents[,7])w
 }
-if (counter>0) {cat("There is/are ", counter, ' missing featureCount file(s) in the zipped directory')}
-unlink('*.featurecount') # cleanup - delete uncompressed files
 
 # add column and row names to the `rawData` matrix
 colnames(rawData) <- paste(targets$Condition, targets$Replicate, targets$Batch, sep='_')
