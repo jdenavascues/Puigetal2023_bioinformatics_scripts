@@ -10,6 +10,11 @@ Scripts #5-7 deal with the analysis of scRNAseq data already published by the Pe
 
 All scripts are designed so that the repository can be cloned and run straight away. The `librarian` package should take care of installing whatever packages are needed, and all resources are either available or downloaded programmatically. The tests have only been done in RStudio, though.
 
+## In-progress bits
+
+- There is a mismatch between the Rmd and HTML versions of script #1 - the HTML relies on a previous version, where the read count data per gene per sample was stored as a zip file in the repo. Now the Rmd file relies on reading the data directly from GEO. This will be tested and knitted into HTML as soon as the GEO data is released (should be by 12/06/2023).
+- Scripts #5-7 are not ready yet (07/06/2023), but will be made available soon (target is 12/06/2023). 
+
 ## Authors
 
 Contributors names and contact info
