@@ -136,7 +136,7 @@ for (geo in targets$GEOsample) {
   conn <- gzcon(connlink)
   txt <- readLines(conn)
   fileContents <- read.table(textConnection(txt), sep="\t", header=T)
-  rawData <- cbind(rawData, fileContents[,7])w
+  rawData <- cbind(rawData, fileContents[,7])
 }
 
 # add column and row names to the `rawData` matrix
