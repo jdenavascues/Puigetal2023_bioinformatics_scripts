@@ -53,7 +53,7 @@ if (Sys.getenv("RSTUDIO")==1) {
   # the following checks that the latter went well, but assuming
   # that the user has not changed the name of the repo
   d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
-  if (d != 'RNAseq-EmcDaSc-adult_midgut') { stop(
+  if (d != 'Puigetal2023_bioinformatics_scripts') { stop(
     paste0("Could not set working directory automatically to where this",
            " script resides.\nPlease do `setwd()` manually"))
     }
