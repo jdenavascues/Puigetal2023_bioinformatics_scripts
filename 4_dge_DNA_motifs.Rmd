@@ -35,7 +35,7 @@ librarian::shelf(
   # plotting
   ggtheme, ggtext, ggrepel, RColorBrewer, cetcolor, hrbrthemes,
   # convenience
-  here)
+  here, quiet = TRUE)
 
 if(!exists("gseCP_summarise", mode="function")) source("utils.R")
 ```

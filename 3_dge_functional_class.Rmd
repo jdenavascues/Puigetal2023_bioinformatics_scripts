@@ -37,7 +37,7 @@ librarian::shelf(
   ggh4x, ggthemes, ggtext, ggrepel, ggnewscale,
   enrichplot, genekitr, pathview,  cetcolor, patchwork,
 # convenience
-  here)
+  here, quiet=TRUE)
 
 if(!exists("gseCP_summarise", mode="function")) source("utils.R")
 ```
