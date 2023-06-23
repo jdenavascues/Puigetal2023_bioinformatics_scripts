@@ -37,7 +37,7 @@ librarian::shelf(
   ggplot2, ggthemes, ggtext, ggrepel, ggpubr,
   eulerr, RColorBrewer, cetcolor,
   # convenience
-  here)
+  here, quiet=TRUE)
 
 if(!exists("ggmaplot2", mode="function")) source("utils.R")
 ```
