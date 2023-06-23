@@ -196,7 +196,9 @@ plotPCA(vsd_Object)
 
 This makes sense: PC1 mostly separates *scute* overexpression from the rest, and PC2 is dominated by 'amount' of *daughterless* function (*da^RNAi^* < *control* < *da* < *da:da*). So we save this:
 ```{r save-vst-bcorr-counts}
-saveRDS(vsd_Object, 'output/vst_pseudocounts_batchCorrected.RDS')
+dirpath <- file.path(getwd(), 'output')
+if ( !dir.exists(dirpath) ) dir.create( dirpath )
+saveRDS(vsd_Object, file.path(dirpath, 'vst_pseudocounts_batchCorrected.RDS'))
 ```
 
 
@@ -257,7 +259,7 @@ pheatmap(
 
 This is somewhat redundant with PCA but also makes sense, so we will save the `vsd_Object` for the descriptive visualisations.
 ```{r save-pseudocounts}
-saveRDS(vsd_Object, 'output/vsd.RDS')
+saveRDS(vsd_Object, file.path(dirpath, 'vsd.RDS'))
 ```
 
 
@@ -278,8 +280,8 @@ This seems reasonably in order, so we move on to saving the expression data for 
 ```{r save-counts}
 rawCounts        <- as.data.frame(counts(analysisObject, normalized=FALSE))
 normalisedCounts <- as.data.frame(counts(analysisObject, normalized=TRUE))
-saveRDS(rawCounts, 'output/rawCounts.RDS')
-saveRDS(normalisedCounts, 'output/normalisedCounts.RDS')
+saveRDS(rawCounts, file.path(dirpath, 'rawCounts.RDS'))
+saveRDS(normalisedCounts, file.path(dirpath, 'normalisedCounts.RDS'))
 ```
 
 
@@ -309,7 +311,7 @@ for (condtn in test_conditions) {
   deData <- merge(deData, dlist, by=0)
   deData <- deData[,c(1,ncol(deData),2:(ncol(deData)-1))]
   # save for later
-  saveRDS(deData, file=paste0("output/", 'Control_vs_', condtn, ".RDS"))
+  saveRDS(deData, file=file.path(dirpath, paste0('Control_vs_', condtn, ".RDS")))
   # save as Supplementary data for publication
   cols <- c('gene_symbol', 'ensemblGeneID', 'log2FoldChange', 'padj')
   rownames(deData) <- NULL
@@ -341,5 +343,5 @@ targets$condition_md <- factor(
   targets$condition_md,
   c('*wild-type*', '*da*', '*da:da*','*da^RNAi^*', '*scute*')
   )
-saveRDS(targets, 'output/targets.RDS')
+saveRDS(targets, file.path(dirpath, 'targets.RDS'))
 ```
