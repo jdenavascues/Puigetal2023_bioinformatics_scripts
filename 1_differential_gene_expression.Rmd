@@ -105,18 +105,10 @@ write.table(dlist, file="resources/gene_symbols.txt", col.names=NA)
 ## 1.3 Load raw count data
 
 
-### 1.3.1 Download the count data
+### 1.3.1 Download the pre-processed data
 
 The datasets are available in GEO. We can simply get a list of download URLs like this:
 ```{r get-counts-geo}
-dirpath <- file.path(getwd(), 'input')
-if (!dir.exists( dirpath )) dir.create( dirpath )
-download.file('https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE234019&format=file',
-              destfile = file.path(dirpath, 'featureCounts.tar'))
-untar(file.path(dirpath, 'featureCounts.tar'))
-
-
-
 samples <- list('C3N4AACXX_1', 'C3N4AACXX_4', 'C3N4AACXX_9', 'C3N4AACXX_7',
                 'C3N4AACXX_11', 'C3N4AACXX_2', 'C3N4AACXX_6', 'C3N4AACXX_10',
                 'CON1', 'CON2', 'CON3', 'DA1', 'DA2', 'DA3', 'SCUTE1',
