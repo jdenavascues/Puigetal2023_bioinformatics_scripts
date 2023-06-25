@@ -17,7 +17,7 @@ ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
 knitr::opts_chunk$set(dev = 'png', 
                       fig.align = 'center', fig.height = 7, fig.width = 8.5, 
                       pdf.options(encoding = "ISOLatin9.enc"),
-                      fig.path='notebook_figs/', warning=FALSE, message=FALSE)
+                      fig.path='notebook_figs', warning=FALSE, message=FALSE)
 ```
 
 
@@ -27,13 +27,11 @@ knitr::opts_chunk$set(dev = 'png',
 **Libraries:**
 ```{r libraries, warning=FALSE, message=FALSE}
 if (!require("librarian")) install.packages("librarian")
-librarian::shelf(
-  # data
-  dplyr, stringr, DESeq2, edgeR, biomaRt, rtracklayer, GenomicFeatures, limma,
-  # graphics
-  ggplot2, pheatmap, scico, dendsort,
-  # convenience
-  here, writexl, gzcon)
+librarian::shelf(dplyr, stringr,
+                 DESeq2, edgeR, biomaRt, rtracklayer, GenomicFeatures, limma,
+                 ggplot2, pheatmap, scico, dendsort,
+                 here, writexl, gzcon,
+                 quiet = TRUE)
 ```
 
 **Set working directory:**
