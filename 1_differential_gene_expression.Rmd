@@ -12,12 +12,13 @@ output:
     df_print: paged
     css: doc.css
 ---
-```{r setup, echo=FALSE, cache=FALSE}
+```{r setup, echo = FALSE, cache = FALSE}
 ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+fsep <- .Platform$file.sep
 knitr::opts_chunk$set(dev = 'png', 
-                      fig.align = 'center', fig.height = 7, fig.width = 8.5, 
+                      fig.align = 'center', fig.height = 7, fig.width = 10, 
                       pdf.options(encoding = "ISOLatin9.enc"),
-                      fig.path='notebook_figs', warning=FALSE, message=FALSE)
+                      fig.path=paste0('notebook_figs', fsep), warning=FALSE, message=FALSE)
 ```
 
 
@@ -97,7 +98,7 @@ dlist <- getBM(attributes = c('ensembl_gene_id', 'external_gene_name'),
 rownames(dlist) <- dlist$ensembl_gene_id
 dlist[1] <- NULL
 names(dlist) <- 'gene_symbol'
-write.table(dlist, file="resources/gene_symbols.txt", col.names=NA)
+write.table(dlist, file=file.path(getwd(), "resources", "gene_symbols.txt"), col.names=NA)
 ```
 
 
@@ -331,7 +332,7 @@ Now we just need to write the adjusted p-values and the log~2~(fold changes). Th
 # add `rawCounts` to `tests`
 tests <- rlist::list.append(tests, `Raw counts per gene per sample`=rawCounts)
 # Supplementary data for publication
-write_xlsx(tests, path = 'output/Table S3.xlsx')
+write_xlsx(tests, path = file.path('output', 'Table S3.xlsx'))
 ```
 
 Finally, to have the experimental designed captured in a flexible manner for later on:

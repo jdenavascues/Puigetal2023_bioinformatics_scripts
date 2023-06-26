@@ -2,3 +2,4 @@
 *.RDS
 *.gz
 *.xlsx
+*.feather
