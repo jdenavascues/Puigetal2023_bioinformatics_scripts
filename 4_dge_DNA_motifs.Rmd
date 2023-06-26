@@ -17,7 +17,7 @@ ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
 knitr::opts_chunk$set(dev = 'png', 
                       fig.align = 'center', fig.height = 7, fig.width = 8.5, 
                       pdf.options(encoding = "ISOLatin9.enc"),
-                      fig.path='notebook_figs/', warning=FALSE, message=FALSE)
+                      fig.path='notebook_figs', warning=FALSE, message=FALSE)
 ```
 
 
@@ -42,6 +42,7 @@ if(!exists("gseCP_summarise", mode="function")) source("utils.R")
 
 **Set working directory:**
 ```{r setwd}
+fsep <- .Platform$file.sep
 if (Sys.getenv("RSTUDIO")==1) {
    # setwd to where the editor is, if the IDE is RStudio
   setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
@@ -50,7 +51,7 @@ if (Sys.getenv("RSTUDIO")==1) {
   setwd(here::here())
   # the following checks that the latter went well, but assuming
   # that the user has not changed the name of the repo
-  d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
+  d <- str_split(getwd(), fsep)[[1]][length(str_split(getwd(), fsep)[[1]])]
   if (d != 'Puigetal2023_bioinformatics_scripts') { stop(
     paste0("Could not set working directory automatically to where this",
            " script resides.\nPlease do `setwd()` manually"))
@@ -60,9 +61,9 @@ if (Sys.getenv("RSTUDIO")==1) {
 
 **To save images outside the repo (to reduce size):**
 ```{r define_dir2figs}
-figdir <- paste0(c(head(str_split(getwd(),'/')[[1]],-1),
-                   paste0(tail(str_split(getwd(),'/')[[1]],1), '_figures')),
-                 collapse='/')
+figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+                 collapse = fsep)
 dir.create(figdir, showWarnings = FALSE)
 ```
 
@@ -78,10 +79,11 @@ dir.create(figdir, showWarnings = FALSE)
 This gets us the DGE data from `DESeq2`, identified by FlyBase/Ensembl ID and gene symbol:
 ```{r load_DEG_data}
 # DEG data
-DaKD_deg <- readRDS('output/Control_vs_DaKD.RDS')
-DaOE_deg <- readRDS('output/Control_vs_DaOE.RDS')
-DaDaOE_deg <- readRDS('output/Control_vs_DaDaOE.RDS')
-ScOE_deg <- readRDS('output/Control_vs_ScOE.RDS')
+outpath <- file.path(getwd(), 'output')
+DaKD_deg <- readRDS(file.path(outpath, 'Control_vs_DaKD.RDS'))
+DaOE_deg <- readRDS(file.path(outpath, 'Control_vs_DaOE.RDS'))
+DaDaOE_deg <- readRDS(file.path(outpath, 'Control_vs_DaDaOE.RDS'))
+ScOE_deg <- readRDS(file.path(outpath, 'Control_vs_ScOE.RDS'))
 ```
 
 Gene sets of up/down-regulated in our experiments for a given fold-change threshold `fc_thresh`:
@@ -127,63 +129,46 @@ rk_v10_url <- paste0(rkURLbase, '/mc_v10_clust/gene_based/',
                      'dm6_v10_clust.genes_vs_motifs.rankings.feather')
 an_v10_url <- paste0('https://resources.aertslab.org/cistarget/motif2tf/',
                      'motifs-v10nr_clust-nr.flybase-m0.001-o0.0.tbl')
-
 # establish the resource sub-directory
-motifpath <- paste0(getwd(), "/resources/motifdbs")
+motifpath <- file.path(getwd(), "resources", "motifdbs")
 if (!dir.exists( motifpath )) dir.create(motifpath)
 
 # read (or download, if the first time) the rankings and annotations 
-tryCatch(
-  { motif_annotations_dm6_v8 <- readRDS(paste0(motifpath, "/motif_annotations_dm6_v8.RDS")) },
-  error = function(e) {
-    message(e)
-    message('\n"motif_annotations_dm6_v8" is not available locally -- it will be downloaded and saved.')
-    motif_annotations_dm6_v8 <- importAnnotations(an_v8_url)
-    saveRDS(motif_annotations_dm6_v8, paste0(motifpath, "/motif_annotations_dm6_v8.RDS"))
-    }
-)
-tryCatch(
-  { options(timeout = max(600, getOption("timeout")))
-    motif_rankings_dm6_v8 <- readRDS(paste0(motifpath, "/motif_rankings_dm6_v8.RDS")) },
-  error = function(e) {
-    message('\n"motif_rankings_dm6_v8" is not available locally -- it will be downloaded and saved.\n\n')
-    message(e)
-    # timeout is in seconds, and may depend on the connection:
-    options(timeout = max(1500, getOption("timeout")))
-    # tried tempfile(), didn't work
-    destfile <- paste0(motifpath, 'motif_rankings_dm6_v8.feather')
-    download.file(url = rk_v8_url,
-                  destfile = destfile,
-                  mode='wget')
-    motif_rankings_dm6_v8 <- importRankings(destfile)
-    file.remove(destfile)
-    saveRDS(motif_rankings_dm6_v8, paste0(motifpath, "/motif_rankings_dm6_v8.RDS"))
-    }
-)
-tryCatch(
-  { motif_annotations_dm6_v10 <- readRDS(paste0(motifpath, "/motif_annotations_dm6_v10.RDS")) },
-  error = function(e) {
-    message(e)
-    message('\n"motif_annotations_dm6_v10" is not available locally -- it will be downloaded and saved.')
-    motif_annotations_dm6_v10 <- importAnnotations(an_v10_url)
-    saveRDS(motif_annotations_dm6_v10, paste0(motifpath, "/motif_annotations_dm6_v10.RDS"))
-    }
-)
-tryCatch(
-  { motif_rankings_dm6_v10 <- readRDS(paste0(motifpath, "/motif_rankings_dm6_v10.RDS")) },
-  error = function(e) {
-    message('\n"motif_rankings_dm6_v10.RDS" is not available locally -- it will be downloaded and saved.\n\n')
-    message(e)
-    options(timeout = max(1500, getOption("timeout")))
-    destfile <- paste0(motifpath, 'motif_rankings_dm6_v10.feather')
-    download.file(url = rk_v10_url,
-                  destfile = destfile,
-                  mode='wget')
-    motif_rankings_dm6_v10 <- importRankings(destfile)
-    file.remove(destfile)
-    saveRDS(motif_rankings_dm6_v10, paste0(motifpath, "/motif_rankings_dm6_v10.RDS"))
-    }
-)
+if (file.exists( file.path(motifpath, "motif_annotations_dm6_v8.RDS") )) {
+  motif_annotations_dm6_v8 <- readRDS(file.path(motifpath, "motif_annotations_dm6_v8.RDS"))
+} else {
+  motif_annotations_dm6_v8 <- importAnnotations(an_v8_url)
+  saveRDS(motif_annotations_dm6_v8, file.path(motifpath, "motif_annotations_dm6_v8.RDS"))
+}
+if (file.exists( file.path(motifpath, "motif_rankings_dm6_v8.RDS") )) {
+  options(timeout = max(600, getOption("timeout")))
+  motif_rankings_dm6_v8 <- readRDS(file.path(motifpath, "motif_rankings_dm6_v8.RDS"))
+} else {
+  # timeout is in seconds, and may depend on the connection:
+  options(timeout = max(1500, getOption("timeout")))
+  # tried tempfile(), didn't work, so used my wrapper of download.file()
+  destfile <- file.path(motifpath, 'motif_rankings_dm6_v8.feather')
+  databringr(from  = rk_v8_url, to = destfile)
+  motif_rankings_dm6_v8 <- importRankings(destfile)
+  file.remove(destfile)
+  saveRDS(motif_rankings_dm6_v8, file.path(motifpath, "motif_rankings_dm6_v8.RDS"))
+}
+if (file.exists( file.path(motifpath, "motif_annotations_dm6_v10.RDS") )) {
+  motif_annotations_dm6_v10 <- readRDS(file.path(motifpath, "motif_annotations_dm6_v10.RDS"))
+} else {
+  motif_annotations_dm6_v10 <- importAnnotations(an_v10_url)
+  saveRDS(motif_annotations_dm6_v10, file.path(motifpath, "motif_annotations_dm6_v10.RDS"))
+}
+if (file.exists( file.path(motifpath, "motif_rankings_dm6_v10.RDS") ))  {
+  motif_rankings_dm6_v10 <- readRDS(file.path(motifpath, "motif_rankings_dm6_v10.RDS"))
+} else {
+  options(timeout = max(1500, getOption("timeout")))
+  destfile <- file.path(motifpath, 'motif_rankings_dm6_v10.feather')
+  databringr(from = rk_v10_url, to = destfile)
+  motif_rankings_dm6_v10 <- importRankings(destfile)
+  file.remove(destfile)
+  saveRDS(motif_rankings_dm6_v10, file.path(motifpath, "motif_rankings_dm6_v10.RDS"))
+}
 # place last column first, as RcisTarget assumes that is the position of the motif names
 motif_rankings_dm6_v10@rankings <- dplyr::relocate(motif_rankings_dm6_v10@rankings, motifs)
 motif_rankings_dm6_v8@rankings <- dplyr::relocate(motif_rankings_dm6_v8@rankings, motifs)
@@ -209,24 +194,22 @@ It seems that the combination with more possibilities is to match the v8 motif r
 
 Let's see what we get with a simple comparison:
 ```{r}
-# tryCatch statements are for reading the saved results
-# instead of calculating again, in case I want to re-run the script
+# calculate or read cache
 ## "pure" v8 enrichment
-tryCatch(
-  { motrich_pure8 <- readRDS(paste0(getwd(), "/output", "/motrich_pure8.RDS")) },
-  error = function(e) {
-    motrich_pure8 <- cisTarget(geneLists, motif_rankings_dm6_v8, motifAnnot = motif_annotations_dm6_v8)
-    saveRDS(motrich_pure8, paste0(getwd(), "/output", "/motrich_pure8.RDS"))
-    }
-)
+if (file.exists( file.path(outpath, "motrich_pure8.RDS") )) {
+  motrich_pure8 <- readRDS(file.path(outpath, "motrich_pure8.RDS"))
+} else {
+  motrich_pure8 <- cisTarget(geneLists, motif_rankings_dm6_v8,
+                             motifAnnot = motif_annotations_dm6_v8)
+  saveRDS(motrich_pure8, file.path(outpath, "motrich_pure8.RDS") )
+}
 ## "hybrid" v8/v10 enrichment
-tryCatch(
-  { motrich_hybr8 <- readRDS(paste0(getwd(), "/output", "/motrich_hybr8.RDS")) },
-  error = function(e) {
-    motrich_hybr8 <- cisTarget(geneLists, motif_rankings_dm6_v8, motifAnnot = motif_annotations_dm6_v10)
-    saveRDS(motrich_hybr8, paste0(getwd(), "/output", "/motrich_hybr8.RDS"))
-    }
-)
+if (file.exists( file.path(outpath, "motrich_hybr8.RDS") )) {
+  motrich_hybr8 <- readRDS(file.path(outpath, "motrich_hybr8.RDS"))
+} else {
+  motrich_hybr8 <- cisTarget(geneLists, motif_rankings_dm6_v8, motifAnnot = motif_annotations_dm6_v10)
+  saveRDS(motrich_hybr8, file.path(outpath, "motrich_hybr8.RDS"))
+}
 ```
 
 Now let us make sure that this is sound. We can test that the motif enrichment generated is exactly the same:
@@ -287,7 +270,8 @@ head(motrich %>%
 
 **Download FlyBase Gene Groups**
 ```{r, message=FALSE, warning=FALSE}
-geneg.source <- 'http://ftp.flybase.org/releases/FB2023_02/precomputed_files/genes/gene_group_data_fb_2023_02.tsv.gz'
+geneg.source <- paste0('http://ftp.flybase.org/releases/FB2023_02/',
+                       'precomputed_files/genes/gene_group_data_fb_2023_02.tsv.gz')
 geneg <- data.table::fread(geneg.source)
 names(geneg)[[1]] <- 'FB_group_id'
 geneg <- geneg %>% dplyr::select( !contains('_id') )
@@ -555,7 +539,7 @@ texts <- list(x_label   = 'TFs linked to enriched motifs',
               tfs.select = c('da', 'sc')) # this _must_ be 2 genes
 p <- class.swarm(mots_up, 'geneSet', 'TFs', 'NES', 'TFcla6', dotparams, palette, texts)
 p + ylim(2.5,10)
-ggsave(paste0(figdir, '/motifs_up_TFclass.pdf'))
+ggsave(file.path(figdir, 'motifs_up_TFclass.pdf'))
 ```
 
 **For motifs in downregulated genes**:
@@ -565,5 +549,5 @@ texts$tfs.select = c('da', 'E(spl)')
 p <- class.swarm(mots_dn, 'geneSet', 'TFs', 'NES', 'TFcla6', dotparams, palette, texts)
 p + ylim(2.5,10) +
   theme(plot.margin = margin(r = 50))
-ggsave(paste0(figdir, '/motifs_down_TFclass.pdf'))
+ggsave(file.path(figdir, 'motifs_down_TFclass.pdf'))
 ```

@@ -17,7 +17,7 @@ ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
 knitr::opts_chunk$set(dev = 'png', 
                       fig.align = 'center', fig.height = 7, fig.width = 8.5, 
                       pdf.options(encoding = "ISOLatin9.enc"),
-                      fig.path='notebook_figs/', warning=FALSE, message=FALSE)
+                      fig.path='notebook_figs', warning=FALSE, message=FALSE)
 ```
 
 
@@ -44,6 +44,7 @@ if(!exists("gseCP_summarise", mode="function")) source("utils.R")
 
 **Set working directory:**
 ```{r setwd}
+fsep <- .Platform$file.sep
 if (Sys.getenv("RSTUDIO")==1) {
    # setwd to where the editor is, if the IDE is RStudio
   setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
@@ -52,7 +53,7 @@ if (Sys.getenv("RSTUDIO")==1) {
   setwd(here::here())
   # the following checks that the latter went well, but assuming
   # that the user has not changed the name of the repo
-  d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
+  d <- str_split(getwd(), fsep)[[1]][length(str_split(getwd(), fsep)[[1]])]
   if (d != 'Puigetal2023_bioinformatics_scripts') { stop(
     paste0("Could not set working directory automatically to where this",
            " script resides.\nPlease do `setwd()` manually"))
@@ -62,21 +63,22 @@ if (Sys.getenv("RSTUDIO")==1) {
 
 **To save images outside the repo (to reduce size):**
 ```{r define_dir2figs}
-figdir <- paste0(c(head(str_split(getwd(),'/')[[1]],-1),
-                   paste0(tail(str_split(getwd(),'/')[[1]],1), '_figures')),
-                 collapse='/')
+figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+                 collapse = fsep)
 dir.create(figdir, showWarnings = FALSE)
 ```
 
 Load DGE data from `DESeq2`:
 ```{r load_DEG_data}
 # experimental design and labels
-targets <- readRDS('output/targets.RDS')
+outpath <- file.path(getwd(), 'output')
+targets <- readRDS(file.path(outpath, 'targets.RDS'))
 # DEG data
-DaKD_deg <- readRDS('output/Control_vs_DaKD.RDS')
-DaOE_deg <- readRDS('output/Control_vs_DaOE.RDS')
-DaDaOE_deg <- readRDS('output/Control_vs_DaDaOE.RDS')
-ScOE_deg <- readRDS('output/Control_vs_ScOE.RDS')
+DaKD_deg <- readRDS(file.path(outpath, 'Control_vs_DaKD.RDS'))
+DaOE_deg <- readRDS(file.path(outpath, 'Control_vs_DaOE.RDS'))
+DaDaOE_deg <- readRDS(file.path(outpath, 'Control_vs_DaDaOE.RDS'))
+ScOE_deg <- readRDS(file.path(outpath, 'Control_vs_ScOE.RDS'))
 ```
 
 
@@ -95,7 +97,7 @@ Dutta et al. (2015) developed the methods for FACS-purifying different cell type
 
 I first load the GMX file storing the gene sets identified in Dutta et al. (2015) and run `clusterProfiler::GSEA`:
 ```{r dutta}
-dutta_gmx <- import_from_gmx(paste0(getwd(),'/resources/GMX/Dutta.gmx'))
+dutta_gmx <- import_from_gmx(file.path(getwd(),'resources', 'GMX', 'Dutta.gmx'))
 
 daKD_gse_dutta <- GSEA(geneList=make_degrank(DaKD_deg, mode='log2fc', key='ensemblGeneID'),
                        exponent = 1,
@@ -233,8 +235,8 @@ GLAD offers only two levels of gene set organisations: the main lists, and one a
 The GLAD resource files were downloaded from https://www.flyrnai.org/tools/glad/web/.
 ```{r collect_GLAD_data}
 # read whole dataset from file collection
-gladdir <- paste0(getwd(),'/resources/GLAD')
-gladfiles <- paste(gladdir, list.files(gladdir), sep='/')
+gladdir <- file.path(getwd(),'resources', 'GLAD')
+gladfiles <- paste(gladdir, list.files(gladdir), sep=fsep)
 names(gladfiles) <- lapply (
   gladfiles,
   \(x) str_split(str_split(x, "GLAD_")[[1]][[2]], '_')[[1]][[1]] )
@@ -322,7 +324,7 @@ dadaOE_gse_glad <- do.call(
   GSEA, c(list(geneList=rank_dada, nPermSimple = 10000, TERM2GENE = glad_gmx), GSEAparams)
   )
 # scute overexpression
-if ( !file.exists('output/scOE_gse_glad.RDS') ) {
+if ( !file.exists( file.path(outpath, 'scOE_gse_glad.RDS') )) {
   rank_sc <- make_degrank(ScOE_deg, mode='log2fc', key='ensemblGeneID')
   # nPermSimple = 1000000 is needed to calculate accurate p-values
   # this takes a while so I only do it the fist time I run the script
@@ -330,8 +332,8 @@ if ( !file.exists('output/scOE_gse_glad.RDS') ) {
   scOE_gse_glad <- do.call(
     GSEA, c(list(geneList=rank_sc, nPermSimple = 1000000, TERM2GENE = glad_gmx), GSEAparams)
     )  # <|-------------------------------------- this step will take ~1h
-  saveRDS(scOE_gse_glad, 'output/scOE_gse_glad.RDS')
-} else scOE_gse_glad <- readRDS('output/scOE_gse_glad.RDS')
+  saveRDS(scOE_gse_glad, file.path(outpath, 'scOE_gse_glad.RDS'))
+} else scOE_gse_glad <- readRDS(file.path(outpath, 'scOE_gse_glad.RDS'))
 ```
 
 #### Layered heatmaps, main terms

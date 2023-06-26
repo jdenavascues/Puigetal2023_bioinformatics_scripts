@@ -769,3 +769,43 @@ class.swarm <- function(df, # dataframe
   guides(fill = guide_legend(nrow=1), colour = guide_legend(nrow=1))
   return(p)
 }
+
+
+### +-------------------------------------------------------------+
+### |  Cleaner downloads                                          |
+### +-------------------------------------------------------------+
+
+
+is.valid.path <- function(path) {
+  require(checkmate)
+  valid <- c(checkPathForOutput(path)==TRUE,
+             file.exists(path),
+             dir.exists(path))
+  if(any(valid)) return(TRUE)
+  else return(FALSE)
+}
+
+databringr <- function(from, to) {
+  
+  # check 'from'
+  pattern <- "(https?|http?|ftp)://[^ /$.?#].[^\\s]*"
+  if (!stringr::str_detect(from, pattern)) { stop(
+    '`from` must be character string containing a valid URL')}
+  # check 'to'
+  fsep <- .Platform$file.sep
+  pathels <- str_split(to, fsep)[[1]]
+  topath <- paste0(pathels[1:length(pathels)-1], collapse = fsep)
+  if(!dir.exists(topath) & is.valid.path(topath)) {
+    dir.create(topath)
+  }
+  if(is.valid.path(to)) {
+  m <- Sys.which(c('wget', 'curl', 'libcurl', 'internal', 'wininet'))
+  for(method in names(m[nchar(m)>1])) {
+    if(!file.exists(to)) {
+      download.file(url = from, destfile = to,
+                    method = method, quiet = TRUE)
+      }
+    }
+  } else { stop(
+    '`to` must be character string containing a valid path in your system')}
+}

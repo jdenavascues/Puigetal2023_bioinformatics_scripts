@@ -36,6 +36,7 @@ librarian::shelf(dplyr, stringr,
 
 **Set working directory:**
 ```{r setwd}
+fsep <- .Platform$file.sep
 if (Sys.getenv("RSTUDIO")==1) {
    # setwd to where the editor is, if the IDE is RStudio
   setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
@@ -44,7 +45,7 @@ if (Sys.getenv("RSTUDIO")==1) {
   setwd(here::here())
   # the following checks that the latter went well, but assuming
   # that the user has not changed the name of the repo
-  d <- str_split(getwd(),'/')[[1]][length(str_split(getwd(),'/')[[1]])]
+  d <- str_split(getwd(), fsep)[[1]][length(str_split(getwd(), fsep)[[1]])]
   if (d != 'Puigetal2023_bioinformatics_scripts') { stop(
     paste0("Could not set working directory automatically to where this",
            " script resides.\nPlease do `setwd()` manually"))
@@ -54,9 +55,9 @@ if (Sys.getenv("RSTUDIO")==1) {
 
 **To save images outside the repo (to reduce size):**
 ```{r define_dir2figs}
-figdir <- paste0(c(head(str_split(getwd(),'/')[[1]],-1),
-                   paste0(tail(str_split(getwd(),'/')[[1]],1), '_figures')),
-                 collapse='/')
+figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+                 collapse = fsep)
 dir.create(figdir, showWarnings = FALSE)
 ```
 
@@ -107,44 +108,47 @@ write.table(dlist, file="resources/gene_symbols.txt", col.names=NA)
 
 The datasets are available in GEO. We can simply get a list of download URLs like this:
 ```{r get-counts-geo}
+# get experimental design data:
+inpath <- file.path(getwd(), 'input')
 samples <- list('C3N4AACXX_1', 'C3N4AACXX_4', 'C3N4AACXX_9', 'C3N4AACXX_7',
                 'C3N4AACXX_11', 'C3N4AACXX_2', 'C3N4AACXX_6', 'C3N4AACXX_10',
                 'CON1', 'CON2', 'CON3', 'DA1', 'DA2', 'DA3', 'SCUTE1',
                 'SCUTE2', 'SCUTE3')
 ids <- paste0('GSM7441', 184:200)
-fore <- 'https://www.ncbi.nlm.nih.gov/geo/download/?acc='
-mid <- '&format=file&file='
-hind <- '.featurecount.txt.gz'
-urls <- paste0(fore, ids, mid, ids, '_', samples, hind)
-names(urls) <- ids
-```
-
-Read `featureCounts` results for all samples:
-```{r load-raw-counts}
-# get experimental design data:
-targets <- read.table("input/targets.txt", header=TRUE, sep="\t")
+targets <- read.table(file.path(inpath, "targets.txt"), header=TRUE, sep="\t")
 targets$GEOsample <- ids[match(targets$sampleID, samples)]
-# prepare to load gene count data
-rawData <- NULL
-# each column of rawData will contain the reads per gene of a sample
-counter <- 0
-for (geo in targets$GEOsample) {
-  connlink <- url( urls[ names(urls)==geo ] )
-  on.exit(close(connlink))
-  conn <- gzcon(connlink)
-  txt <- readLines(conn)
-  fileContents <- read.table(textConnection(txt), sep="\t", header=T)
-  rawData <- cbind(rawData, fileContents[,7])
+# download data or read cache
+if (file.exists(file.path(inpath, 'rawData.rds'))) {
+  rawData <- readRDS(file.path(inpath, 'rawData.rds'))
+} else {
+  # prepare download URLs
+  fore <- 'https://www.ncbi.nlm.nih.gov/geo/download/?acc='
+  mid <- '&format=file&file='
+  hind <- '.featurecount.txt.gz'
+  urls <- paste0(fore, ids, mid, ids, '_', samples, hind)
+  names(urls) <- ids
+  # prepare to load gene count data
+  rawData <- NULL
+  # each column of rawData will contain the reads per gene of a sample
+  counter <- 0
+  for (geo in targets$GEOsample) {
+    connlink <- url( urls[ names(urls)==geo ] )
+    on.exit(close(connlink))
+    conn <- gzcon(connlink)
+    txt <- readLines(conn)
+    fileContents <- read.table(textConnection(txt), sep="\t", header=T)
+    rawData <- cbind(rawData, fileContents[,7])
+  }
+  # add column and row names to the `rawData` matrix
+  colnames(rawData) <- paste(targets$Condition, targets$Replicate, targets$Batch, sep='_')
+  rownames(rawData) <- fileContents$Geneid
+  # remove genes with low counts
+  cpms <- cpm(rawData)
+  keep <- rowSums(cpms > 1) >= 3 # detected in at least 3 samples
+  rawData <- rawData[keep,]
+  # cache
+  saveRDS(rawData, file.path(inpath, 'rawData.rds'))
 }
-
-# add column and row names to the `rawData` matrix
-colnames(rawData) <- paste(targets$Condition, targets$Replicate, targets$Batch, sep='_')
-rownames(rawData) <- fileContents$Geneid
-
-# remove genes with low counts
-cpms <- cpm(rawData)
-keep <- rowSums(cpms > 1) >= 3 # detected in at least 3 samples
-rawData <- rawData[keep,]
 ```
 
 
@@ -194,9 +198,9 @@ plotPCA(vsd_Object)
 
 This makes sense: PC1 mostly separates *scute* overexpression from the rest, and PC2 is dominated by 'amount' of *daughterless* function (*da^RNAi^* < *control* < *da* < *da:da*). So we save this:
 ```{r save-vst-bcorr-counts}
-dirpath <- file.path(getwd(), 'output')
-if ( !dir.exists(dirpath) ) dir.create( dirpath )
-saveRDS(vsd_Object, file.path(dirpath, 'vst_pseudocounts_batchCorrected.RDS'))
+outpath <- file.path(getwd(), 'output')
+if ( !dir.exists(outpath) ) dir.create( outpath )
+saveRDS(vsd_Object, file.path(outpath, 'vst_pseudocounts_batchCorrected.RDS'))
 ```
 
 
@@ -257,7 +261,7 @@ pheatmap(
 
 This is somewhat redundant with PCA but also makes sense, so we will save the `vsd_Object` for the descriptive visualisations.
 ```{r save-pseudocounts}
-saveRDS(vsd_Object, file.path(dirpath, 'vsd.RDS'))
+saveRDS(vsd_Object, file.path(outpath, 'vsd.RDS'))
 ```
 
 
@@ -278,8 +282,8 @@ This seems reasonably in order, so we move on to saving the expression data for 
 ```{r save-counts}
 rawCounts        <- as.data.frame(counts(analysisObject, normalized=FALSE))
 normalisedCounts <- as.data.frame(counts(analysisObject, normalized=TRUE))
-saveRDS(rawCounts, file.path(dirpath, 'rawCounts.RDS'))
-saveRDS(normalisedCounts, file.path(dirpath, 'normalisedCounts.RDS'))
+saveRDS(rawCounts, file.path(outpath, 'rawCounts.RDS'))
+saveRDS(normalisedCounts, file.path(outpath, 'normalisedCounts.RDS'))
 ```
 
 
@@ -309,7 +313,7 @@ for (condtn in test_conditions) {
   deData <- merge(deData, dlist, by=0)
   deData <- deData[,c(1,ncol(deData),2:(ncol(deData)-1))]
   # save for later
-  saveRDS(deData, file=file.path(dirpath, paste0('Control_vs_', condtn, ".RDS")))
+  saveRDS(deData, file=file.path(outpath, paste0('Control_vs_', condtn, ".RDS")))
   # save as Supplementary data for publication
   cols <- c('gene_symbol', 'ensemblGeneID', 'log2FoldChange', 'padj')
   rownames(deData) <- NULL
@@ -341,5 +345,5 @@ targets$condition_md <- factor(
   targets$condition_md,
   c('*wild-type*', '*da*', '*da:da*','*da^RNAi^*', '*scute*')
   )
-saveRDS(targets, file.path(dirpath, 'targets.RDS'))
+saveRDS(targets, file.path(outpath, 'targets.RDS'))
 ```
