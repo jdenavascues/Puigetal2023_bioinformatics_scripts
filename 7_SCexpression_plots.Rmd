@@ -1,0 +1,435 @@
+---
+title: "7. Expression analyses of interest with scRNAseq data"
+description: "Using the integrated data from Hung et al., 2020 and Li et al., 2022, we will examine the expression of genes of interest"
+principal investigator: "Patrick Varga-Weisz"
+researcher: "Vinícius Dias Nirello"
+contributor: "Joaquín de Navascués"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: readable
+    df_print: paged
+    css: doc.css
+---
+
+```{r setup, echo = FALSE, cache = FALSE}
+ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+fsep <- .Platform$file.sep
+knitr::opts_chunk$set(dev = 'png', 
+                      fig.align = 'center', fig.height = 7, fig.width = 10, 
+                      pdf.options(encoding = "ISOLatin9.enc"),
+                      fig.path=paste0('notebook_figs', fsep), warning=FALSE, message=FALSE)
+```
+
+**Libraries**
+```{r load-libraries}
+library(librarian)
+librarian::shelf(dplyr, stringr,
+                 Seurat, SeuratObject,
+                 ggplot2, ggtext, ggthemes,
+                 quiet = TRUE)
+```
+
+**Set working directory:**
+```{r setwd}
+if (Sys.getenv("RSTUDIO")==1) {
+   # setwd to where the editor is, if the IDE is RStudio
+  setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
+} else {
+  # setwd to where the editor is in a general way - maybe less failsafe than the previous
+  setwd(here::here())
+  # the following checks that the latter went well, but assuming
+  # that the user has not changed the name of the repo
+  d <- str_split(getwd(), fsep)[[1]][length(str_split(getwd(), fsep)[[1]])]
+  if (d != 'Puigetal2023_bioinformatics_scripts') { stop(
+    paste0("Could not set working directory automatically to where this",
+           " script resides.\nPlease do `setwd()` manually"))
+    }
+}
+```
+
+**To save images outside the repo (to reduce size):**
+```{r define_dir2figs}
+figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+                 collapse = fsep)
+dir.create(figdir, showWarnings = FALSE)
+```
+
+
+# 1 Load the integrated, annotated scRNAseq data
+
+
+We can directly read the RDS file generated at the end of the previous script/Rmd file. We then separate just the cell types of interest: ECs —either anterior or posterior—, EEs, ISCs and EBs. This will allow us to analyse the expression of various genes, most importantly _extra macrochaetae_ (_emc_), _scute_ (_sc_) and _daughterless_ (_da_):
+```{r load-data}
+# read the data
+alldata <- readRDS(file.path(getwd(), "output","gut_int_annot.rds"))
+DefaultAssay(alldata) <- "RNA"
+# select the cells of interest (ECs, ISCs, EBs, EEs)
+Idents(alldata) <- alldata@meta.data$integrated_celltype
+alldata.list <- SplitObject(alldata, split.by = "specific_celltype")
+data <- alldat.int <- merge(alldata.list[["enterocyte of anterior midgut epithelium"]],
+                    c(alldata.list[["enterocyte of posterior midgut epithelium"]],
+                      alldata.list[["intestinal stem cell"]],
+                      alldata.list[["enteroblast"]],
+                      alldata.list[["enteroendocrine cell"]]), add.cell.ids = 
+                      c("enterocyte of anterior adult midgut epithelium",
+                        "enterocyte of posterior adult midgut epithelium",
+                        "intestinal stem cell","enteroblast",
+                        "enteroendocrine cell"))
+```
+
+Visualisation of the general dataset with tSNE:
+```{r general-tsne, fig.width=9}
+DimPlot(alldata, reduction = "tsne", pt.size = 0.05, group.by = "integrated_celltype")
+suppressMessages(
+  ggsave('tSNE_integrated.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+
+# 2 Expression of genes of interest
+
+
+```{r cell-counts}
+as.data.frame.table(table((data)$specific_celltype)) %>%
+  dplyr::rename(celltype=Var1, ncells=Freq) %>%
+  knitr::kable()
+```
+The reduced datset allows us a quick exploration of the expression of _emc_, _sc_ and _emc_ in different cell types. Still, we have a large number of cells, so plotting individual dots is misleading - instead, Violin plots will tell where the bulk of the data are, and how common are cells in each group with positive expression of a gene.
+
+> The colour scheme follows that proposed in [Wong. Points of view: Color blindness. _Nat Methods_. 2011;2:441](https://www.nature.com/articles/nmeth.1618/figures/2). We have used this in the rest of the figures of this and previous papers.
+
+```{r interest-genes-plot-integratedCellType}
+toplot_int <- c("sc", "da", "emc")
+cols <- c('#D55E00', '#56B2E9', '#009E73', '#CC79A7', '#E6C31D')
+fills <- c('#D55E0099', '#56B2E999', '#009E7399', '#CC79A799', '#E6C31D99')
+v <- VlnPlot(data, group.by = "integrated_celltype", features = toplot_int,
+             pt.size=0, sort = 'decreasing',
+             cols = fills[c(3, 4, 3, 5)],
+             raster=FALSE, combine=FALSE)
+v <- lapply(v, \(p) p + theme(legend.position = 'None'))
+# this cannot be done inside lapply ¯\_(ツ)_/¯
+v[[1]]$layers[[1]]$aes_params$colour <- cols[c(3, 4, 3, 5)][ggplot_build(v[[1]])$data[[1]]$group]
+v[[2]]$layers[[1]]$aes_params$colour <- cols[c(3, 4, 3, 5)][ggplot_build(v[[2]])$data[[1]]$group]
+v[[3]]$layers[[1]]$aes_params$colour <- cols[c(3, 4, 3, 5)][ggplot_build(v[[3]])$data[[1]]$group]
+v[[1]] <- v[[1]] + theme(axis.text.x = element_text(margin = margin(l=5, unit="cm")),
+                         plot.margin = margin(l=4, unit='cm'))
+(v[[1]] | v[[2]] | v[[3]] + theme(legend.position='right', legend.text = element_text(size=5)))
+```
+
+This clearly shows that both _sc_ and _da_ are expressed at undetectable levels for most cells, with only some of them showing expression (in the case of _sc_ it is clear that this only happens in ISCs/EBs). Meanwhile, _emc_ is only detectable in a significant number of cells in the posterior ECs (pECs).
+
+Let us see now if we split EBs and ISCs:
+```{r interest-genes-plot-specificCellType}
+w <- VlnPlot(data, group.by = "specific_celltype", features = toplot_int,
+             pt.size=0, sort = 'decreasing', cols = fills[c(3,1,4,3,2)], raster=FALSE, combine=FALSE)
+w <- lapply(w, \(p) p + theme(legend.position = 'None'))
+w[[1]]$layers[[1]]$aes_params$colour <- cols[c(3,1,4,3,2)][ggplot_build(w[[1]])$data[[1]]$group]
+w[[2]]$layers[[1]]$aes_params$colour <- cols[c(3,1,4,3,2)][ggplot_build(w[[2]])$data[[1]]$group]
+w[[3]]$layers[[1]]$aes_params$colour <- cols[c(3,1,4,3,2)][ggplot_build(w[[3]])$data[[1]]$group]
+w[[1]] <- w[[1]] + theme(axis.text.x = element_text(margin = margin(l=5, unit="cm")),
+                         plot.margin = margin(l=4, unit='cm'))
+(w[[1]] | w[[2]] | w[[3]] + theme(legend.position='right', legend.text = element_text(size=5)))
+```
+
+Now _emc_ is found in a significant part of the EBs (as is _da_). As all our phenotypic/genetic assays are done in the posterior midgut (regions R4/R5), we can further focus on the cell types there: ISCs, EBs, EEs and pECs:
+```{r emc-plot-prepare}
+ data2 <- alldat.int2 <- merge(alldata.list[["enteroendocrine cell"]],
+                    c(alldata.list[["intestinal stem cell"]],
+                      alldata.list[["enteroblast"]],
+                      alldata.list[["enterocyte of posterior midgut epithelium"]]),
+                    add.cell.ids = c("enteroendocrine cell",
+                                     "intestinal stem cell",
+                                     "enteroblast",
+                                     "enterocyte of posterior adult midgut epithelium")
+                    )
+my_levels <- c("enteroendocrine cell",
+               "intestinal stem cell",
+               "enteroblast",
+               "enterocyte of posterior midgut epithelium")
+data2@meta.data$specific_celltype <- factor(data2@meta.data$specific_celltype, levels = my_levels)
+```
+
+Plotting _emc_ expression again, we see that it is clearly enriched in the absorptive lineage:
+```{r emc-levels-plot}
+u <- VlnPlot(data2, group.by = "specific_celltype", features = c('emc'),
+             pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+u$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(u)$data[[1]]$group]
+u +  labs(title = '*emc*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_emc_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+
+# 3 Comparison of _emc_ with EC markers
+
+
+For comparison, let us compare this with other 'absorptive' _bona fide_ markers:
+```{r myoIA-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('Myo31DF'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*myoIA*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_myoIA_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r betaTry-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('betaTry'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*&beta;Try*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_betaTry_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r alphaTry-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('alphaTry'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*&alpha;Try*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_alphaTry_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r iotaTry-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('iotaTry'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*&iota;Try*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_iotaTry_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r thetaTry-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('thetaTry'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*&theta;Try*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_thetaTry_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r Vha100.4-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('Vha100-4'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*Vha100-4*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_Vha100-4_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r nub-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('nub'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*nubbin*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_nub_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r LManVI-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('LManVI'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*LManVI*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_LManVI_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+```{r LManV-levels-plot}
+p <- VlnPlot(data2, group.by = "specific_celltype", features = c('LManV'),
+                pt.size=0, cols = fills[c(4,1,2,3)], raster=FALSE)
+p$layers[[1]]$aes_params$colour <- cols[c(4,1,2,3)][ggplot_build(p)$data[[1]]$group]
+
+p + labs(title = '*LManV*', x = 'cell type') +
+  scale_x_discrete(labels=c('EE', 'ISC', 'EB', 'EC (PMG)')) +
+  theme(legend.position = 'none',
+        plot.title = element_markdown())
+suppressMessages(
+  ggsave('singlecell_LManV_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+This convinces us that, as far as scRNAseq data is concerned, _emc_ is a good absorptive marker (EB+EC), at least in the posterior midgut.
+
+
+# 4 Characteristics of _sc^+^_ cells
+
+
+_sc_ is a well-characterised inducer of terminal differentiation of ISCs into EEs - though it can induce proliferation transiently. It is also claimed to have an oscillatory expression in ISCs. We see here very few cells showing any expression at all, in cells classified as either ISCs or EBs. So it would be useful to see whether these cells resemble more ISCs or EEs (within the cluster of ISC/EBs)
+
+```{r subset-sc+}
+isc <- alldata.list[["intestinal stem cell"]]
+eb <- alldata.list[["enteroblast"]]
+isc$sc_count <- isc@assays$RNA@counts["sc", ]
+eb$sc_count <- eb@assays$RNA@counts["sc", ]
+# classify ISCs as sc pos/neg
+isc.sc.pos <- subset(isc, subset = sc_count > 0)
+isc.sc.pos$sc <- "sc positive"
+isc.sc.neg <- subset(isc, subset = sc_count == 0)
+isc.sc.neg$sc <- "sc negative"
+isc.data <- merge(isc.sc.pos, c(isc.sc.neg), add.cell.ids = c("sc.pos", "sc.neg"))
+# same with EBs
+eb.sc.pos <- subset(eb, subset = sc_count > 0)
+eb.sc.pos$sc <- "sc positive"
+eb.sc.neg <- subset(eb, subset = sc_count == 0)
+eb.sc.neg$sc <- "sc negative"
+eb.data <- merge(eb.sc.pos, c(eb.sc.neg), add.cell.ids = c("sc.pos", "sc.neg"))
+```
+
+## Violin plot with EE markers
+
+```{r ee-markers, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 5}
+toplot_ee <- list("pros", "Mip", "NPF", "CCHa1", "CCHa2", "Orcokinin", "Tk")
+v <- lapply(toplot_ee, \(g) {
+  VlnPlot(isc.data, group.by = "sc", features = g, pt.size=0.5) +
+    labs(title=paste0('EE marker *', g, '* xpn in ISCs')) +
+    theme(plot.title = element_markdown())
+  VlnPlot(eb.data, group.by = "sc", features = g, pt.size=0.5) +
+    labs(title=paste0('EE marker *', g, '* xpn in EBs')) +
+    theme(plot.title = element_markdown())
+  })
+v
+```
+
+```{r, pre-ee?-markers, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 5}
+toplot_pre_ee <- c("phyl", "Dl", "N", "ttk", "Poxn", "dimm", "elav", "Rab3")
+w <- lapply(toplot_pre_ee, \(g) {
+  VlnPlot(isc.data, group.by = "sc", features = g, pt.size=0.5) +
+    labs(title=paste0('EE marker *', g, '* xpn in ISCs')) +
+    theme(plot.title = element_markdown())
+  VlnPlot(eb.data, group.by = "sc", features = g, pt.size=0.5) +
+    labs(title=paste0('EE marker *', g, '* xpn in EBs')) +
+    theme(plot.title = element_markdown())
+  })
+w
+```
+
+From this, it looks like the cells where _sc_ is detected with scRNAseq do not seem to be EEs or pre-EEs, as all the markers are higher in the _sc^—^_ cells except for _Dl_ and _N_, and these could be also interpreted as ISC and ISC/EB markers, respectively.
+
+## _sc^—^_ cells in pseudotime
+
+Let us then have a look at _where_ are these _sc^+^_ cells in the gene-space trajectory from ISC to EE or EC.
+```{r pseudotime-ISCsc+, fig.height = 5, fig.width = 8}
+# load cell PCA coordinates and `specific_celltype` identities
+celltype_expn <- read.csv(file.path(getwd(), "output", "trajectories_markers.csv"))
+# identify sc+ positive ISCs and EBs
+table.isc <- isc.sc.pos@assays[["CCA"]]@data@Dimnames[[2]]
+table.eb <- eb.sc.pos@assays[["CCA"]]@data@Dimnames[[2]]
+# put it together
+celltype_expn <- celltype_expn %>%
+  select(-X) %>%
+  pivot_wider(values_from=logcount, names_from=gene) %>%
+  left_join(as.data.frame(sce@colData) %>% select(cell, specific_celltype),
+            by='cell') %>%
+  mutate(sc_xpn = factor(ifelse(cell %in% c(table.isc, table.eb), 1, 0),)) %>%
+  mutate(cell_type_isc_sc = case_when(
+    specific_celltype == 'intestinal stem cell' & sc_xpn == 1 ~ '*sc<sup>+</sup>* ISC',
+    specific_celltype == 'intestinal stem cell' & sc_xpn == 0 ~ '*sc<sup>—</sup>* ISC',
+    specific_celltype == 'enteroblast' ~ 'EB',
+    specific_celltype == 'enterocyte of posterior midgut epithelium' ~ 'pEC',
+    specific_celltype == 'enteroendocrine cell' ~ 'EE')) %>%
+  mutate(cell_type_eb_sc = case_when(
+    specific_celltype == 'enteroblast' & sc_xpn == 1 ~ '*sc<sup>+</sup>* EB',
+    specific_celltype == 'enteroblast' & sc_xpn == 0 ~ '*sc<sup>—</sup>* EB',
+    specific_celltype == 'intestinal stem cell' ~ 'ISC',
+    specific_celltype == 'enterocyte of posterior midgut epithelium' ~ 'pEC',
+    specific_celltype == 'enteroendocrine cell' ~ 'EE')) %>%
+  mutate(
+    cell_type_isc_sc = factor(cell_type_isc_sc,
+    levels = c('*sc<sup>—</sup>* ISC', 'EB', 'pEC', 'EE', '*sc<sup>+</sup>* ISC'))) %>%
+  mutate(
+    cell_type_eb_sc = factor(cell_type_eb_sc,
+    levels = c('ISC', '*sc<sup>—</sup>* EB', 'pEC', 'EE', '*sc<sup>+</sup>* EB'))) %>%
+  mutate(
+    specific_celltype = factor(specific_celltype,
+    levels = c('intestinal stem cell', 'enteroblast',
+               'enterocyte of posterior midgut epithelium', 'enteroendocrine cell')))
+
+# plot ISC cells that show sc expression
+cols <- c('#D55E00', '#56B2E9', '#009E73', '#CC79A7', '#000000') # '#E6C31D'
+fills <- c('#D55E0099', '#56B2E999', '#009E7399', '#CC79A799', '#00000099') # '#E6C31D99'
+
+
+ggplot(celltype_expn, aes(PC1, PC2)) +
+  geom_point(aes(fill = cell_type_isc_sc, colour = cell_type_isc_sc),
+             stroke=0.6, shape=21) +
+  scale_fill_manual(name='', values = fills) +
+  scale_colour_manual(name='', values = cols) +
+  geom_point(data=celltype_expn %>% filter(cell %in% table.isc),
+             aes(PC1, PC2),
+             fill = fills[5], colour = cols[5],
+             stroke=0.6, shape=21) +
+  labs(title = 'ISCs expressing _scute_') +
+  theme(legend.text = element_markdown(),
+        legend.position = "right",
+        plot.title = element_markdown()) +
+  guides(color = guide_legend(nrow = 3, byrow = TRUE),
+         fill = guide_legend(nrow = 3, byrow = TRUE))
+```
+
+```{r pseudotime-EBsc+, fig.height = 5, fig.width = 8}
+ggplot(celltype_expn, aes(PC1, PC2)) +
+  geom_point(aes(fill = cell_type_eb_sc, colour = cell_type_eb_sc),
+             stroke=0.6, shape=21) +
+  scale_fill_manual(name='', values = fills) +
+  scale_colour_manual(name='', values = cols) +
+  geom_point(data=celltype_expn %>% filter(cell %in% table.eb),
+             aes(PC1, PC2),
+             fill = fills[5], colour = cols[5],
+             stroke=0.6, shape=21) +
+  labs(title = 'ISCs expressing _scute_') +
+  theme(legend.text = element_markdown(),
+        legend.position = "right",
+        plot.title = element_markdown()) +
+  guides(color = guide_legend(nrow = 3, byrow = TRUE),
+         fill = guide_legend(nrow = 3, byrow = TRUE))
+```

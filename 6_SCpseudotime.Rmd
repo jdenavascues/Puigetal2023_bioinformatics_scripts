@@ -1,0 +1,463 @@
+---
+title: "6. Pseudotime analysis of ISC differentiation into pECs and EE cells"
+description: "Integrated data from Hung et al., 2020, and Li et al., 2022, using the pipeline by Hung et al."
+principal investigator: "Patrick Varga-Weisz"
+researcher: "Vinícius Dias Nirello"
+contributor: "Joaquín de Navascués"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: readable
+    df_print: paged
+    css: doc.css
+---
+
+```{r setup, echo = FALSE, cache = FALSE}
+ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+fsep <- .Platform$file.sep
+knitr::opts_chunk$set(dev = 'png', 
+                      fig.align = 'center', fig.height = 7, fig.width = 10, 
+                      pdf.options(encoding = "ISOLatin9.enc"),
+                      fig.path=paste0('notebook_figs', fsep), warning=FALSE, message=FALSE)
+```
+
+**Libraries**
+```{r load-libraries}
+library(librarian)
+librarian::shelf(tidyverse, broom,
+                 ggplot2, ggtext, ggthemes, RColorBrewer,
+                 Seurat, SeuratDisk, SingleCellExperiment, mclust, slingshot,
+                 quiet = TRUE)
+```
+
+**Set working directory:**
+```{r setwd}
+if (Sys.getenv("RSTUDIO")==1) {
+   # setwd to where the editor is, if the IDE is RStudio
+  setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
+} else {
+  # setwd to where the editor is in a general way - maybe less failsafe than the previous
+  setwd(here::here())
+  # the following checks that the latter went well, but assuming
+  # that the user has not changed the name of the repo
+  d <- str_split(getwd(), fsep)[[1]][length(str_split(getwd(), fsep)[[1]])]
+  if (d != 'Puigetal2023_bioinformatics_scripts') { stop(
+    paste0("Could not set working directory automatically to where this",
+           " script resides.\nPlease do `setwd()` manually"))
+    }
+}
+```
+
+**To save images outside the repo (to reduce size):**
+```{r define_dir2figs}
+figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+                 collapse = fsep)
+dir.create(figdir, showWarnings = FALSE)
+```
+
+
+# 1 Prepare the dataset
+
+
+## Load data for ISC/EB, EE and pECs
+
+We start with the integrated scRNAseq dataset saved as a `Seurat` object in script #5, to explore the expression 'trajectory' along the differentiation of ISCs into pECs and EE cells. We start with converting the `SeuratObject` into a `SingleCellExperiment` object (which can be used by the `slingshot` library), and filtering the dataset to keep only the cell types of interest:
+```{r prepare-dataset}
+outpath <- file.path(getwd(), "output")
+alldata <- readRDS(file.path(outpath, "gut_int_annot.rds"))
+# set up the assay with the integrated expression values
+DefaultAssay(alldata) <- "CCA"
+# name individual cells by their sequence identifier
+alldata@meta.data[["cell"]] <- alldata@assays[["CCA"]]@data@Dimnames[[2]]
+# create SCE object and filter by cells of the PMG
+if (file.exists( file.path(outpath, "trajectory-sce.rds") )) {
+  sce <- readRDS(file.path(outpath, "trajectory-sce.rds"))
+} else {
+  sce <- as.SingleCellExperiment(alldata)
+  rm('alldata')
+  keep_celltypes <- c("intestinal stem cell / enteroblast", "enteroendocrine cell",
+                      "enterocyte of posterior midgut epithelium")
+  keep_cells <- colData(sce) %>%
+    as.data.frame() %>%
+    dplyr::filter(integrated_celltype %in% keep_celltypes) %>%
+    pull(cell)
+  sce <- sce[, keep_cells]
+  # cache
+  saveRDS(sce, file.path(outpath, "trajectory-sce.rds"))
+}
+as.data.frame.table(table(colData(sce)$integrated_celltype)) %>%
+  dplyr::rename(celltype=Var1, ncells=Freq) %>%
+  knitr::kable()
+```
+
+> <font size="2">**Note:** here we are selecting the `integrated_celltype` classification from script #5 rather than the `specific_celltype`—the one where ISCs and EBs are differentiataed. Differentiating between ISCs and EBs is robust enough to see some differential gene expresion but not enough that we can define well a trajectory that includes EBs as a transient state towards EC and not towards EE.</font>
+
+## Load state markers
+
+We did several tests to define the best list of genes that work as markers for each cell type we are interested in. We performed a differential expression analysis using MAST test only of different types of enterocytes, stem cells and enteroendocrine cells. We selected the 100 markers with smallest _p_-value for each cell type, and combined them with a list of previously known markers:
+
+| Cell type | Markers                                                           |
+|:---------:|:------------------------------------------------------------------|
+|   ISC     | _Dl, Smvt, sna, polo, stf, cnn_                                   |
+|    EB     | _klu, E(spl)m3-HLH, E(spl)malpha-BFM, E(spl)mbeta-HLH_            |
+|    EC     | _Myo31DF, nub, alphaTry, betaTry_                                 |
+|    EE     | _pros, AstaA, AstaC, Mip, NPF, CCHa1, CCHa2, Orcokinin, Tk, Dh31_ |
+
+Get the 400 best markers for EE, pEC, EB and ISC types:
+```{r select-markers, message=FALSE}
+# get all markers per cell type (EE, pEC, aEC, EB, ISC)
+markerfiles <- list.files(path=file.path(outpath, "markers-mast"),
+                          pattern="*.csv", full.names=FALSE)
+# remove ECs form anterior midgut - will not be used
+markerfiles <- markerfiles[ !str_detect(markerfiles, 'anterior') ]
+markers <- tibble(filename = markerfiles) %>%
+  mutate(contents = purrr::map(file.path(outpath, "markers-mast", markerfiles),
+                        ~ read_csv(.))) %>%
+  unnest(cols = c(contents)) %>%
+  rowwise %>% mutate(cell_type = str_remove(filename, "_mast.csv")) %>%
+  mutate(cell_type = case_when(
+    cell_type == 'stem_cell'            ~ 'intestinal stem cell',
+    cell_type == 'enterocyte_posterior' ~ 'enterocyte (pmg)',
+    TRUE                                ~ cell_type))
+# keep the top 100
+keep_markers <- markers %>%
+  group_by(filename) %>%
+  # they are already in ascending order
+  top_n(-100,p_val_adj) %>%
+  pull(gene)
+# check
+length(keep_markers); head(keep_markers)
+```
+
+We add now 4 markers from the manual list:
+```{r combine-markers}
+isc <- c("Dl", "Smvt", "sna", "polo", "stf", "cnn")
+eb  <- c("klu", "E(spl)m3-HLH", "E(spl)malpha-BFM", "E(spl)mbeta-HLH")
+ec  <- c("Myo31DF", "nub", "alphaTry", "betaTry", "lambdaTry")
+ee  <- c("pros", "AstaA", "AstaC", "Mip", "NPF", "CCHa1", "CCHa2", "Orcokinin", "Tk", "Dh31")
+keep_markers <- unique(keep_markers, c(isc, eb, ec, ee))
+length(keep_markers)
+```
+
+# 2 Establish pseudotime trajectories
+
+Now we are in a position to use the slingshot algorithm. This uses Euclidean distances in the construction of 'pseudotime', assuming that cells that have transcriptional similarities will be close to each other when in a reduced dimension. The first step of the pseudotime inference is to perform PCA to reduce the dimensionality of the dataset—including only the selected marker genes.
+
+We then group the cells to determine the structure of lineages. Unlike clustering for annotation, which aims to identify cell types, here we want to find branching events and their location. This is done with the `mclust` package, which uses automated Gaussian mixture modeling.
+
+```{r gmm-clustering}
+# read cached results if available
+if (file.exists( file.path(outpath, "trajectory-PCA.rds") )) {
+  pcadat <- readRDS( file.path(outpath, "trajectory-PCA.rds") )
+  } else {
+  # calculate trajectories
+  ## calculate PCs
+  pca1 <- prcomp(t(assays(sce)$logcounts[keep_markers,]), scale=TRUE)
+  ## store as df
+  pcadat <- pca1$x %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("cell") %>%
+    left_join(colData(sce) %>% as.data.frame(), by="cell")
+  ## reduce dimensions to 'n' components
+  ncomponents <- 2
+  reducedDims(sce) <- SimpleList(PCA=pca1$x[, 1:ncomponents])
+  ## find clusters with GMM
+  cl1 <- Mclust(pca1$x[, 1:ncomponents], verbose=FALSE)
+  colData(sce)$GMM <- as.factor(cl1$classification)
+  pcadat$GMM <- as.factor(cl1$classification)
+  ## cache
+  saveRDS(pcadat, file.path(outpath, "trajectory-PCA.rds"))
+}
+# check
+pal <- c('#009E73', '#CC79A7', '#E6C31D')
+palalpha <- c('#009E7355', '#CC79A755', '#E6C31D55')
+ggplot(pcadat, aes(PC1, PC2)) +
+  geom_point(aes(fill = factor(integrated_celltype), colour = factor(integrated_celltype)),
+             stroke=0.6, shape=21) +
+  scale_fill_manual(name='', values = palalpha) +
+  scale_colour_manual(name='', values = pal)
+```
+
+From this we can perform the pseudotime analysis. The Slingshot algorithm identifies the global lineage structure with a _minimum spanning tree_-based clustering and then fits simultaneous principal curves to describe each lineage.
+```{r find-pseudotime}
+# load trajectories
+if (file.exists(file.path(outpath, "slingshot-trajectory.rds"))) {
+  sl1 <- readRDS(file.path(outpath, "slingshot-trajectory.rds"))
+  } else {
+  # calculate
+  sl1 <- slingshot(sce, clusterLabels="integrated_celltype", reducedDim="PCA",
+                   start.clus="intestinal stem cell / enteroblast", 
+                   end.clus=c("enteroendocrine cell","enterocyte of posterior midgut epithelium"))
+  # cache
+  saveRDS(sl1, file.path(outpath, "slingshot-trajectory.rds"))
+}
+# plot origin/destination of trajectories
+pointcolors <- palalpha[as.factor(sce$integrated_celltype)]
+plot(reducedDims(sce)$PCA, col = pointcolors, pch=16, asp = 1, cex=0.5)
+lines(SlingshotDataSet(sl1), lwd=2, type = 'lineages', col = '#00000077')
+legendlabels = unique(as.factor(sce$integrated_celltype))
+legendcolors = unique(pointcolors)
+legend("bottomleft", pch=16, legend=legendlabels, col=legendcolors, cex=0.8, bty='n')
+```
+
+We can see an ordering according to what we expected. Here we obtain two branches, one from intestinal stem cell to enteroendocrine cells and other to the enterocyte of posterior midgut epithelium. And we can now make a more refined representation of the expression trajectories:
+```{r detail-trajectory, message=FALSE, warning=FALSE}
+# extract cell type, PCA position and pseudotime value per cell
+pseudotimes <- data.frame(
+  cell=colnames(sl1),
+  pseudotime1=sl1$slingPseudotime_1, pseudotime2=sl1$slingPseudotime_2,
+  PC1=reducedDims(sl1)$PCA[, "PC1"], PC2=reducedDims(sl1)$PCA[, "PC2"],
+  integrated_celltype=sl1$integrated_celltype)
+# get PCA curves of pseudotime trajectory
+sshot <- SlingshotDataSet(sl1)
+curve1 <- data.frame(sshot@curves[[1]]$s[sshot@curves[[1]]$ord,]) # Lineage1
+curve2 <- data.frame(sshot@curves[[2]]$s[sshot@curves[[2]]$ord,]) # Lineage2
+# plot
+p <- ggplot(pseudotimes, aes(PC1, PC2)) +
+  geom_point(aes(fill = factor(integrated_celltype),
+                 colour = factor(integrated_celltype)),
+             stroke=0.6, shape=21) +
+  scale_fill_manual(name='', values = palalpha) +
+  scale_colour_manual(name='', values = pal) +
+  geom_path(data=curve1, col="black", lwd=1, linetype="solid") +
+  geom_path(data=curve2, col="black", lwd=1, linetype="solid")
+p
+suppressMessages(
+  ggsave('trajectories.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+
+And of the pseudotime value of each cell:
+```{r pseudotime-values, message=FALSE, warning=FALSE}
+pcamarkers <- data.frame(pseudotime1=sl1$slingPseudotime_1,
+                        pseudotime2=sl1$slingPseudotime_2,
+                        PC1=reducedDims(sl1)$PCA[, "PC1"],
+                        PC2=reducedDims(sl1)$PCA[, "PC2"],
+                        cell=colnames(sl1))
+ggplot(pcamarkers, aes(PC1, PC2, color=pseudotime1)) +
+  geom_point(size=0.5, alpha=0.8) +
+  geom_path(data=curve1, col="black", lwd=1, linetype="solid") +
+  ggtitle(paste0("lineage 1: ", paste0(sshot@lineages$Lineage1, collapse="->")))
+ggplot(pcamarkers, aes(PC1, PC2, color=pseudotime2)) +
+  geom_point(size=0.5, alpha=0.8) +
+  geom_path(data=curve2, col="black", lwd=1, linetype="solid") +
+  ggtitle(paste0("lineage 2: ", paste0(sshot@lineages$Lineage2, collapse="->")))
+```
+
+
+# 3 Gene expression along pseudotime
+
+
+We can now generate a dataframe where to store gene expression, PC1 and PC2, cell type _and_ pseudotime values along two differentiation trajectories.
+```{r gather-expn-trajectory}
+# load cached trajectories
+if (file.exists(file.path(getwd(), "output", "trajectories_markers.csv"))) {
+  trajs <- read.csv(file.path(getwd(), "output", "trajectories_markers.csv"))
+  } else {
+  # calculate trajectories
+  ## collect expression data
+  markerdat <- logcounts(sce) %>%
+    as.matrix() %>%
+    as.data.frame() %>%
+    tibble::rownames_to_column("gene") %>%
+    gather("cell", "logcount", -gene) %>%
+    filter(gene %in% c(isc, eb, ec, ee, 'emc', 'sc')) # without this step, the final dataset is gigantic
+  ## attach pseudotime values
+  trajs <- data.frame(pseudotime1=sl1$slingPseudotime_1,
+                      pseudotime2=sl1$slingPseudotime_2,
+                      PC1=reducedDims(sl1)$PCA[, "PC1"],
+                      PC2=reducedDims(sl1)$PCA[, "PC2"],
+                      cell=colnames(sl1)) %>%
+    left_join(markerdat, by="cell")
+  ## store
+  write.csv(trajs, file.path(outpath, "trajectories_markers.csv"))
+  rm('sce', 'sl1')
+  }
+```
+
+
+With this, we can check that ISC/EB markers decrease expression as pseudotime increases:
+```{r check-ISC-markers, message=FALSE, warning=FALSE}
+# limit genes to ISC/EB markers 
+traj_iscmarkers <- filter(trajs, gene %in% c(isc, eb))
+# plot expression
+ggplot(traj_iscmarkers,
+       aes(pseudotime1, logcount, group=gene, color=gene)) +
+  coord_cartesian(ylim=c(0, 3)) +
+  scale_x_reverse() +
+  scale_y_continuous(position = "right") +
+  geom_smooth(se=FALSE) +
+  xlab('pseudotime (ISC/EB -> EC)')
+ggplot(traj_iscmarkers,
+       aes(pseudotime2, logcount, group=gene, color=gene)) +
+  coord_cartesian(ylim=c(0, 3)) +
+  geom_smooth(se=FALSE) +
+  xlab('pseudotime (ISC/EB -> EE)')
+
+```
+
+These graphs plot logcounts vs pseudotime, but a direct scatter/line representation would generate overplotting and noise, obscuring the pattern. This is why we use the `geom_smooth`. The smoothing algorithm uses a linear model function from where confidence intervals can be calculated from standard errors - these are not plotted here, for simplicity (see below).
+
+We did the same for enterocyte markers, which show increase in the ISC/EB->EC trajectory, but not in the ISC/EB->EE one:
+```{r check-EC-markers, message=FALSE, warning=FALSE}
+traj_ecmarkers <- filter(trajs, gene %in% ec)
+ggplot(traj_ecmarkers,
+       aes(pseudotime1, logcount, group=gene, color=gene)) +
+  coord_cartesian(ylim=c(0, 3)) +
+  scale_x_reverse() +
+  scale_y_continuous(position = "right") +
+  geom_smooth(se=FALSE) +
+  xlab('pseudotime (ISC/EB -> EC)')
+ggplot(traj_ecmarkers,
+       aes(pseudotime2, logcount, group=gene, color=gene)) +
+  coord_cartesian(ylim=c(0, 3)) +
+  geom_smooth(se=FALSE) +
+  xlab('pseudotime (ISC/EB -> EE)')
+```
+
+And the same for enteroendocrine cells markers, which also show the expected pattern:
+```{r check-EE-markers, message=FALSE, warning=FALSE}
+traj_eemarkers <- filter(trajs, gene %in% ee)
+ggplot(traj_eemarkers,
+       aes(pseudotime1, logcount, group=gene, color=gene)) +
+  coord_cartesian(ylim=c(0, 4)) +
+  scale_x_reverse() +
+  scale_y_continuous(position = "right") +
+  geom_smooth(se=FALSE) +
+  xlab('pseudotime (ISC/EB -> EC)')
+ggplot(traj_eemarkers,
+       aes(pseudotime2, logcount, group=gene, color=gene)) +
+  coord_cartesian(ylim=c(0, 4)) +
+  geom_smooth(se=FALSE) +
+  xlab('pseudotime (ISC/EB -> EE)')
+```
+
+This all makes sense, so we can turn now to _emc_ and _sc_, the genes of interest, and plot them with the 95% confidence interval (in grey).
+
+```{r interest-genes-plot, message=FALSE, warning=FALSE}
+# emc
+ggplot(trajs %>% filter(gene == "emc"), aes(pseudotime1, logcount, colour=gene)) +
+  scale_x_reverse() +
+  scale_y_continuous(position = "right") +
+  geom_smooth() +
+  xlab('pseudotime (ISC/EB -> EC)')
+ggplot(trajs %>% filter(gene == "emc"), aes(pseudotime2, logcount, colour=gene)) +
+  geom_smooth() +
+  xlab('pseudotime (ISC/EB -> EE)')
+# sc
+ggplot(trajs %>% filter(gene == "sc"), aes(pseudotime1, logcount, colour=gene)) +
+  scale_x_reverse() +
+  scale_y_continuous(position = "right") +
+  geom_smooth() +
+  xlab('pseudotime (ISC/EB -> EC)')
+ggplot(trajs %>% filter(gene == "sc"), aes(pseudotime2, logcount, colour=gene)) +
+  geom_smooth() +
+  xlab('pseudotime (ISC/EB -> EE)')
+```
+
+This shows that, measured by scRNAseq, the expression of _emc_ increases as differentiation progresses towards EC and decreases toward EE. _sc_, by contrast, seems highest in undifferentiated cells, and decreases as cells differentiate into any lineage. The most novel aspect of this is the expression of _emc_, so let us plot this a bit better. The approach is based on [this answer in Stack Overflow](https://stackoverflow.com/a/49202967/6731772), and requires a bit of preparation:
+```{r interest-genes-plot-beaut-1, message=FALSE, warning=FALSE}
+# prepare data
+bar_int <- trajs %>%
+  filter(gene == "emc") %>%
+  mutate(pseudotime2neg = pseudotime2 * -1)
+
+# prepare bits and bobs
+#https://stackoverflow.com/a/49202967/6731772
+## x axis
+xaxis_begin  <- -30
+xaxis_end    <- 35
+nxticks <- 14
+xtick_frame <-data.frame(
+  ticks = seq(xaxis_begin, xaxis_end, length.out = nxticks),
+  zero=0)# %>% subset(ticks != 0)
+xframe <- data.frame(lab = seq(xaxis_begin, xaxis_end, length.out = nxticks),
+                     zero = 0) %>% subset(lab != 0)
+## y axis
+yaxis_begin  <- -0.5
+yaxis_end    <- 2.5
+nyticks <- 7
+ytick_frame <-data.frame(
+  ticks = seq(yaxis_begin, yaxis_end, length.out = nyticks),
+  zero=-0.5)# %>% subset(ticks != zero)
+yframe <- data.frame(lab = seq(yaxis_begin, yaxis_end, length.out = nyticks),
+                     zero = -0.5)# %>% subset(lab != zero)
+## tick sizes
+xtick_sz <- (tail(yframe$lab, 1) - yframe$lab[1]) / 128
+ytick_sz <- (tail(xframe$lab, 1) - xframe$lab[1]) / 128
+```
+
+Preliminary plot:
+```{r interest-genes-plot-beaut-2, message=FALSE, warning=FALSE}
+# preliminary plot
+smoop <- ggplot(bar_int, aes(x=pseudotime1, y=logcount)) +
+  geom_smooth(colour = '#CC79A7', fill = '#CC79A799',
+              na.rm = TRUE) +
+  geom_smooth(aes(x=pseudotime2neg),
+              colour = '#009E73', fill = '#009E7399',
+              na.rm = TRUE)
+smoop
+```
+
+Let us add a central Y-axis and a bi-directional X-axis:
+```{r interest-genes-plot-beaut-3, message=FALSE, warning=FALSE}
+smoop <- smoop +
+  # y axis line
+  geom_segment(x = -0.1, xend = -0.1, 
+               y = yframe$zero[1], yend = tail(yframe$lab, 1),
+               linewidth = 0.5,
+               colour = 'black') +
+  # x axis line
+  geom_segment(y = -0.5, yend = -0.5,
+               x = xframe$lab[1], xend = tail(xframe$lab, 1),
+               linewidth = 0.5,
+               lineend = 'butt',
+               linejoin = 'mitre',
+               colour = 'black',
+               arrow = arrow(angle = 20,
+                             length = unit(1/(2*nxticks), "npc"),
+                             ends = "both",
+                             type = "open")
+               ) +
+  # x ticks
+  geom_segment(data = xtick_frame[3:nrow(xtick_frame)-1,], 
+               aes(x = ticks, xend = ticks, 
+                   y = -0.5, yend = -0.5 + xtick_sz),
+                   colour = 'black') +
+  # y ticks
+  geom_segment(data = ytick_frame, 
+               aes(x = zero, xend = zero + ytick_sz, 
+                   y = ticks, yend = ticks),
+                   colour = 'black') +
+  theme_void()
+smoop
+```
+
+Now remove unwanted stuff:
+```{r interest-genes-plot-beaut-4, message=FALSE, warning=FALSE}
+smoop <- smoop +
+  # labels
+  geom_text(data=xframe[3:nrow(xframe)-1,], aes(x=lab, y=-0.5, label=lab),
+            family = 'Helvetica', vjust=1.5,
+            colour = 'black') +
+  geom_text(data=yframe, aes(x=rep(-0.25, nrow(yframe)),
+                             y=c(lab[[1]]+0.1, lab[2:nrow(yframe)]),
+                             label=lab),
+            family = 'Helvetica', hjust=1.5,
+            colour = 'black') +
+  geom_richtext(x = -15, y = -1,
+                label = "pseudotime (SEC)",
+                col = "grey40") +
+  geom_richtext(x = 17.5, y = -1,
+                label = "pseudotime (ABS)",
+                col = "grey40") +
+  theme(legend.position = 'none')
+smoop
+suppressMessages(
+  ggsave('pseudotime_emc_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
+)
+```
+

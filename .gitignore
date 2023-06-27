@@ -2,3 +2,6 @@
 *.RDS
 *.gz
 *.xlsx
+*.h5ad
+*.h5seurat
+*.feather
