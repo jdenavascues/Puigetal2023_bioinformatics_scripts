@@ -20,7 +20,7 @@ All scripts are designed so that the repository can be cloned and run straight a
 Contributors names and contact info
 
 * Joaquín de Navascués [@jdenavascues](https://twitter.com/jdenavascues)/[ORCID](https://orcid.org/0000-0002-5414-4056)
-* Vinicius Dias Nirello [Google Scholar](https://scholar.google.com/citations?user=uMXPCs4AAAAJ))
+* Vinícius Dias Nirello [Google Scholar](https://scholar.google.com/citations?user=uMXPCs4AAAAJ))
 * Aleix Puig-Barbé [@AleixPuig7](https://twitter.com/AleixPuig7)/[ORCID](https://orcid.org/0000-0001-6677-8489)
 
 ## Acknowledgments
