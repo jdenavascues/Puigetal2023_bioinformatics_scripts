@@ -12,9 +12,9 @@ This repository simply captures the data analysis scripts used for the paper in 
 
 * Joaquín de Navascués [@jdenavascues](https://twitter.com/jdenavascues)/[ORCID](https://orcid.org/0000-0002-5414-4056)
 
-* Vinícius Dias Nirello [Google Scholar](https://scholar.google.com/citations?user=uMXPCs4AAAAJ)[GitHub](https://github.com/vnirello)
+* Vinícius Dias Nirello [Google Scholar](https://scholar.google.com/citations?user=uMXPCs4AAAAJ)/[GitHub](https://github.com/vnirello)
 
-* Aleix Puig-Barbé [@AleixPuig7](https://twitter.com/AleixPuig7)/[ORCID](https://orcid.org/0000-0001-6677-8489)[GitHub](https://github.com/aleixpuigb)
+* Aleix Puig-Barbé [@AleixPuig7](https://twitter.com/AleixPuig7)/[ORCID](https://orcid.org/0000-0001-6677-8489)/[GitHub](https://github.com/aleixpuigb)
 
 ## Acknowledgments
 
