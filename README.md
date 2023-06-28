@@ -1,7 +1,6 @@
 # Puig et al., 2023: bulk and single-cell RNAseq analysis scripts
  
-This repository simply captures the data analysis scripts used for the paper in Rmd notebook format. The notebooks briefly discuss the rationale behind the approaches taken, and show the closest programmatical version to the figures in the paper. The pipeline has been written so that a relatively unskilled user can simply clone a 'lightweight' repository and run each script straight away (i.e. the scripts take care of installing required libraries . The `librarian` package should take care of installing whatever packages are needed, and all resources are either available or downloaded programmatically. The tests have only been done in RStudio, though.
-
+This repository simply captures the data analysis scripts used for the paper in Rmd notebook format. The notebooks briefly discuss the rationale behind the approaches taken, and show the closest programmatical version to the figures in the paper. The pipeline has been written so that a relatively unskilled user can simply clone a 'lightweight' repository and run each script straight away (i.e. the scripts are intended to be platform-independent, take care of installing the necessary libraries, and all other resources are either included already or downloaded programmatically). As I (JdN) am relatively unskilled myself, and tests have only been done in RStudio using Mac OS X, some adaptation may be required - please feel free to raise an issue or contact me directly.
 
 ## Description
 
@@ -9,17 +8,12 @@ This repository simply captures the data analysis scripts used for the paper in 
 
 **Scripts #5 to #7** deal with the analysis of scRNAseq data already published by the Perrimon lab ([Hung et al., 2020])(https://doi.org/10.1073/pnas.1916820117) and the [Fly Cell Atlas consortium](https://flycellatlas.org/) ([Li et al., 2022])(https://doi.org/10.1126/science.abk2432). The pipeline was written by Vinicius Dias Nirello, and adapted for sharing by Joaquín de Navascués. Our pipeline uses data from Hung et al., (2020) whose integration was computed by the authors (and shared directly with us) from their [data available at GEO](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE120537). Because of the differences in C++ computing libraries and compilers working under the hood of R in different machines, this integrated data and their UMAP representation cannot be reproduced easily. Therefore we provide another script (_integration_Hung2020_, based on the [scripts from that publication](https://htmlpreview.github.io/?https://github.com/hbc/drosophila-midgut-analysis/blob/master/integration/integration.html)) that shows how the analysis could have been done purely from data deposited in public repositories, and pipe the results into script #5.
 
-## In-progress bits
-
-- There is a mismatch between the Rmd and HTML versions of script #1 - the HTML relies on a previous version, where the read count data per gene per sample was stored as a zip file in the repo. Now the Rmd file relies on reading the data directly from GEO. This will be tested and knitted into HTML as soon as the GEO data is released (should be by 12/06/2023).
-- Scripts #5-7 are not ready yet (07/06/2023), but will be made available soon (target is 12/06/2023). 
-
 ## Authors
 
-Contributors names and contact info
-
 * Joaquín de Navascués [@jdenavascues](https://twitter.com/jdenavascues)/[ORCID](https://orcid.org/0000-0002-5414-4056)
+
 * Vinícius Dias Nirello [Google Scholar](https://scholar.google.com/citations?user=uMXPCs4AAAAJ)[GitHub](https://github.com/vnirello)
+
 * Aleix Puig-Barbé [@AleixPuig7](https://twitter.com/AleixPuig7)/[ORCID](https://orcid.org/0000-0001-6677-8489)[GitHub](https://github.com/aleixpuigb)
 
 ## Acknowledgments
