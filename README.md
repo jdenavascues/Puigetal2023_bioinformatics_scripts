@@ -8,6 +8,8 @@ This repository simply captures the data analysis scripts used for the paper in 
 
 **Scripts #5 to #7** deal with the analysis of scRNAseq data already published by the Perrimon lab ([Hung et al., 2020])(https://doi.org/10.1073/pnas.1916820117) and the [Fly Cell Atlas consortium](https://flycellatlas.org/) ([Li et al., 2022])(https://doi.org/10.1126/science.abk2432). The pipeline was written by Vinícius Dias Nirello, and adapted for sharing by Joaquín de Navascués. Our pipeline uses data from Hung et al., (2020) whose integration was computed by the authors (and shared directly with us) from their [data available at GEO](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE120537). Because of the differences in C++ computing libraries and compilers working under the hood of R in different machines, this integrated data and their UMAP representation cannot be reproduced easily. Therefore we provide another script (_integration_Hung2020_, based on the [scripts from that publication](https://htmlpreview.github.io/?https://github.com/hbc/drosophila-midgut-analysis/blob/master/integration/integration.html)) that shows how the analysis could have been done purely from data deposited in public repositories, and pipe the results into script #5.
 
+**Note**: This is a lightweight version of the scripts - no data are stored here, and instead they are automatically downloaded (and often deleted after loading); the only figures produced are for the notebooks (those for the data are saved in a different folder). However, you can obtain an archived version with the datasets and final figures from Zenodo [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.8116966.svg)](https://doi.org/10.5281/zenodo.8116966).
+
 ## Authors
 
 * Joaquín de Navascués [@jdenavascues](https://twitter.com/jdenavascues)/[ORCID](https://orcid.org/0000-0002-5414-4056)
@@ -19,3 +21,12 @@ This repository simply captures the data analysis scripts used for the paper in 
 ## Acknowledgments
 
 Code snippets taken from Stack Overflow and other places are linked where they are used.
+
+Work supported by:
+- funding from Cardiff University and the University of Essex
+- NC3Rs SKT grant NC/W001047/1
+- DFG Grant KO5594/1-1
+- an EMBO Long-Term Fellowship
+- FAPESP fellowship #2021/00393-9
+- FAPESP São Paulo Excellence Chair #2019/16113-5
+- ERC Advanced Grant no. 268515
