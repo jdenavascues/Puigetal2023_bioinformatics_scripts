@@ -1,5 +1,5 @@
 ---
-title: "6. Pseudotime analysis of ISC differentiation into pECs and EE cells"
+title: "VI. Pseudotime analysis of ISC differentiation into pECs and EE cells"
 description: "Integrated data from Hung et al., 2020, and Li et al., 2022, using the pipeline by Hung et al."
 principal investigator: "Patrick Varga-Weisz"
 researcher: "Vinícius Dias Nirello"
@@ -27,7 +27,7 @@ knitr::opts_chunk$set(dev = 'png',
 ```{r load-libraries}
 library(librarian)
 librarian::shelf(tidyverse, broom,
-                 ggplot2, ggtext, ggthemes, RColorBrewer,
+                 ggplot2, ggtext, ggthemes, RColorBrewer, ggnewscale,
                  Seurat, SeuratDisk, SingleCellExperiment, mclust, slingshot,
                  quiet = TRUE)
 ```
@@ -364,6 +364,14 @@ This shows that, measured by scRNAseq, the expression of _emc_ increases as diff
 bar_int <- trajs %>%
   filter(gene == "emc") %>%
   mutate(pseudotime2neg = pseudotime2 * -1)
+id2class <- data.frame(
+  cell       = sce$cell,
+  integrated = factor(sce$integrated_celltype,
+                      levels = unique(sce$integrated_celltype)),
+  specific   = factor(sce$specific_celltype,
+                      levels = unique(sce$specific_celltype)))
+bar_int <- bar_int %>%
+  left_join(id2class, by="cell")
 
 # prepare bits and bobs
 #https://stackoverflow.com/a/49202967/6731772
@@ -382,7 +390,7 @@ yaxis_end    <- 2.5
 nyticks <- 7
 ytick_frame <-data.frame(
   ticks = seq(yaxis_begin, yaxis_end, length.out = nyticks),
-  zero=-0.5)# %>% subset(ticks != zero)
+  zero=-0.6)# %>% subset(ticks != zero)
 yframe <- data.frame(lab = seq(yaxis_begin, yaxis_end, length.out = nyticks),
                      zero = -0.5)# %>% subset(lab != zero)
 ## tick sizes
@@ -390,30 +398,45 @@ xtick_sz <- (tail(yframe$lab, 1) - yframe$lab[1]) / 128
 ytick_sz <- (tail(xframe$lab, 1) - xframe$lab[1]) / 128
 ```
 
-Preliminary plot:
+For reasons unknown to me, plotting the following in one go takes forever, but in layers it is fine. So we first do the preliminary plot:
 ```{r interest-genes-plot-beaut-2, message=FALSE, warning=FALSE}
 # preliminary plot
-smoop <- ggplot(bar_int, aes(x=pseudotime1, y=logcount)) +
-  geom_smooth(colour = '#CC79A7', fill = '#CC79A799',
+smoop <- ggplot(bar_int, aes(x = pseudotime1, y = logcount)) +
+  geom_smooth(colour = '#009E73', fill = '#009E7399',
               na.rm = TRUE) +
   geom_smooth(aes(x=pseudotime2neg),
-              colour = '#009E73', fill = '#009E7399',
+              colour = '#CC79A7', fill = '#CC79A799',
               na.rm = TRUE)
 smoop
 ```
 
-Let us add a central Y-axis and a bi-directional X-axis:
+Let's add cellular identities along the trajectories:
 ```{r interest-genes-plot-beaut-3, message=FALSE, warning=FALSE}
+# adapting https://stackoverflow.com/questions/9085104/9085518
+smoop <- smoop +
+  new_scale_colour() +
+  geom_segment(aes(x = pseudotime1, y = -0.6,
+                   xend = pseudotime1, yend=-0.55,
+                   colour = integrated), data = bar_int) +
+  geom_segment(aes(x = pseudotime2neg, y = -0.6,
+                   xend = pseudotime2neg, yend=-0.55,
+                   colour = integrated), data = bar_int) +
+  scale_colour_manual(name='', values = palalpha) # defined further above
+smoop
+```
+
+Let us add a central Y-axis and a bi-directional X-axis:
+```{r interest-genes-plot-beaut-4, message=FALSE, warning=FALSE}
 smoop <- smoop +
   # y axis line
   geom_segment(x = -0.1, xend = -0.1, 
                y = yframe$zero[1], yend = tail(yframe$lab, 1),
-               linewidth = 0.5,
+               linewidth = 0.3,
                colour = 'black') +
   # x axis line
-  geom_segment(y = -0.5, yend = -0.5,
+  geom_segment(y = -0.6, yend = -0.6,
                x = xframe$lab[1], xend = tail(xframe$lab, 1),
-               linewidth = 0.5,
+               linewidth = 0.3,
                lineend = 'butt',
                linejoin = 'mitre',
                colour = 'black',
@@ -425,22 +448,23 @@ smoop <- smoop +
   # x ticks
   geom_segment(data = xtick_frame[3:nrow(xtick_frame)-1,], 
                aes(x = ticks, xend = ticks, 
-                   y = -0.5, yend = -0.5 + xtick_sz),
+                   y = -0.6, yend = -0.6 + xtick_sz),
                    colour = 'black') +
   # y ticks
   geom_segment(data = ytick_frame, 
                aes(x = zero, xend = zero + ytick_sz, 
                    y = ticks, yend = ticks),
                    colour = 'black') +
-  theme_void()
+  theme_void() +
+  theme(legend.position = 'none')#, margin(r = 10, l = 10, unit = 'pt'))
 smoop
 ```
 
 Now remove unwanted stuff:
-```{r interest-genes-plot-beaut-4, message=FALSE, warning=FALSE}
+```{r interest-genes-plot-beaut-5, message=FALSE, warning=FALSE}
 smoop <- smoop +
   # labels
-  geom_text(data=xframe[3:nrow(xframe)-1,], aes(x=lab, y=-0.5, label=lab),
+  geom_text(data=xframe[3:nrow(xframe)-1,], aes(x=lab, y=-0.6, label=lab),
             family = 'Helvetica', vjust=1.5,
             colour = 'black') +
   geom_text(data=yframe, aes(x=rep(-0.25, nrow(yframe)),
@@ -448,14 +472,18 @@ smoop <- smoop +
                              label=lab),
             family = 'Helvetica', hjust=1.5,
             colour = 'black') +
-  geom_richtext(x = -15, y = -1,
-                label = "pseudotime (SEC)",
+  # label x 'axes'
+  geom_richtext(x = -15, y = 2.2,
+                label = "**pseudotime (SEC)**",
                 col = "grey40") +
-  geom_richtext(x = 17.5, y = -1,
-                label = "pseudotime (ABS)",
+  geom_richtext(x = 17.5, y = 2.2,
+                label = "**pseudotime (ABS)**",
                 col = "grey40") +
   theme(legend.position = 'none')
 smoop
+```
+
+```{r save-image}
 suppressMessages(
   ggsave('pseudotime_emc_xpn.pdf', plot = last_plot(), device = 'pdf', path = figdir, dpi = 300)
 )

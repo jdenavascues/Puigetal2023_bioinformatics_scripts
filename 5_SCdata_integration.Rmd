@@ -1,5 +1,5 @@
 ---
-title: "5. Integration of *Drosophila* midgut scRNAseq datasets"
+title: "V. Integration of *Drosophila* midgut scRNAseq datasets"
 description: "Integration of scRNAseq data from doi:10.1073/pnas.1916820117 and doi:10.1126/science.abk2432"
 principal investigator: "Patrick Varga-Weisz"
 researcher: "Vinícius Dias Nirello"
@@ -71,8 +71,11 @@ As the dataset has already been integrated, let's select the raw data as the def
 ```{r load-data1}
 # get the dataset
 inpath <- file.path(getwd(), 'input')
+if (!file.exists( file.path(inpath, 'integrated_Hung2020.rds') )) {
 databringr(from = 'http://genomics.essex.ac.uk/flygut/integrated_Hung2020.rds',
            to = file.path(inpath, 'integrated_Hung2020.rds'))
+}
+
 # load data
 data1 <- readRDS(file.path("input", "integrated_Hung2020.rds"))
 as.data.frame.table(table((data1)$technology)) %>%

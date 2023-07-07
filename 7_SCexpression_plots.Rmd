@@ -1,5 +1,5 @@
 ---
-title: "7. Expression analyses of interest with scRNAseq data"
+title: "VII. Expression analyses of interest with scRNAseq data"
 description: "Using the integrated data from Hung et al., 2020 and Li et al., 2022, we will examine the expression of genes of interest"
 principal investigator: "Patrick Varga-Weisz"
 researcher: "Vinícius Dias Nirello"
@@ -26,7 +26,7 @@ knitr::opts_chunk$set(dev = 'png',
 **Libraries**
 ```{r load-libraries}
 library(librarian)
-librarian::shelf(dplyr, stringr,
+librarian::shelf(dplyr, stringr, tidyr, tibble,
                  Seurat, SeuratObject,
                  ggplot2, ggtext, ggthemes,
                  quiet = TRUE)
@@ -340,7 +340,7 @@ v <- lapply(toplot_ee, \(g) {
 v
 ```
 
-```{r, pre-ee?-markers, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 5}
+```{r, pre-ee-markers, message=FALSE, warning=FALSE, fig.height = 3.5, fig.width = 5}
 toplot_pre_ee <- c("phyl", "Dl", "N", "ttk", "Poxn", "dimm", "elav", "Rab3")
 w <- lapply(toplot_pre_ee, \(g) {
   VlnPlot(isc.data, group.by = "sc", features = g, pt.size=0.5) +
@@ -364,12 +364,17 @@ celltype_expn <- read.csv(file.path(getwd(), "output", "trajectories_markers.csv
 # identify sc+ positive ISCs and EBs
 table.isc <- isc.sc.pos@assays[["CCA"]]@data@Dimnames[[2]]
 table.eb <- eb.sc.pos@assays[["CCA"]]@data@Dimnames[[2]]
+# match cell ID with specific_celltype
+id2type <- data2@meta.data %>%
+  select(specific_celltype) %>%
+  rownames_to_column(var='cell') %>%
+  mutate(cell = sub("(.*?)_(.*?)", "\\2", cell))
+
 # put it together
 celltype_expn <- celltype_expn %>%
   select(-X) %>%
   pivot_wider(values_from=logcount, names_from=gene) %>%
-  left_join(as.data.frame(sce@colData) %>% select(cell, specific_celltype),
-            by='cell') %>%
+  left_join(id2type, by='cell') %>%
   mutate(sc_xpn = factor(ifelse(cell %in% c(table.isc, table.eb), 1, 0),)) %>%
   mutate(cell_type_isc_sc = case_when(
     specific_celltype == 'intestinal stem cell' & sc_xpn == 1 ~ '*sc<sup>+</sup>* ISC',
@@ -426,7 +431,7 @@ ggplot(celltype_expn, aes(PC1, PC2)) +
              aes(PC1, PC2),
              fill = fills[5], colour = cols[5],
              stroke=0.6, shape=21) +
-  labs(title = 'ISCs expressing _scute_') +
+  labs(title = 'EBs expressing _scute_') +
   theme(legend.text = element_markdown(),
         legend.position = "right",
         plot.title = element_markdown()) +

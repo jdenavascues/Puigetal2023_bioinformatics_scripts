@@ -183,5 +183,5 @@ grid.arrange(q + ggtitle("My UMAP"), ggim + ggtitle("Hung et al. UMAP"), ncol=2)
 This shows how we could have done this using the GEO accession number as starting point; however, historically we obtained first the data from Dr Hu, and therefore we will reflect that in the code described in document #5.
 
 ```{r cleanup, echo=FALSE}
-unlink( file.path(getwd(), 'output', list('GSE120537_counts.rds', 'GSE120537_metadata.rds')) )
+# unlink( file.path(getwd(), 'output', list('GSE120537_counts.rds', 'GSE120537_metadata.rds')) )
 ```
