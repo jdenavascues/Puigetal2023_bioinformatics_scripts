@@ -336,7 +336,8 @@ for (condtn in test_conditions) {
 Now we just need to write the adjusted p-values and the log~2~(fold changes). That, with the raw counts, should be enough for anyone to do their own 'light' analysis without having to get any files from GEO.
 ```{r table-s3}
 # add `rawCounts` to `tests`
-tests <- rlist::list.append(tests, `Raw counts per gene per sample`=rawCounts)
+testsappendage <- rawCounts %>% tibble::rownames_to_column(var = "ensembl_id")
+tests <- rlist::list.append(tests, `Raw counts per gene per sample` = testsappendage)
 # Supplementary data for publication
 write_xlsx(tests, path = file.path('output', 'Table S3.xlsx'))
 ```

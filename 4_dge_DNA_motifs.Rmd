@@ -512,7 +512,7 @@ top5up <- mots_up %>%
   filter(nchar(TFLargeClass)>1 & TFLargeClass!='unclassified') %>%
   arrange(n) %>%
   tail(5) %>%
-  select(TFLargeClass) %>% unlist()
+  dplyr::select(TFLargeClass) %>% unlist()
 
 # group other classes into "Others"
 mots_up <- mots_up %>%
@@ -527,7 +527,7 @@ top5dn <- mots_dn %>%
   filter(nchar(TFLargeClass)>1 & TFLargeClass!='unclassified') %>%
   arrange(n) %>%
   tail(5) %>%
-  select(TFLargeClass) %>% unlist()
+  dplyr::select(TFLargeClass) %>% unlist()
 
 # group other classes into "Others"
 mots_dn <- mots_dn %>%
@@ -569,3 +569,36 @@ p + ylim(2.5,10) +
   theme(plot.margin = margin(r = 50))
 ggsave(file.path(figdir, 'motifs_down_TFclass.pdf'))
 ```
+
+
+To make Table S5
+```{r}
+wlogo <- addLogo(motrich)
+wlogo <- wlogo %>% dplyr::select(c(2,1,3,4,5,6,11,7)) %>% rename(TFclass = 7)
+datatable(wlogo, 
+          escape = FALSE,
+          filter = "top",
+          option = list(
+            pageLength=100,
+            initComplete = JS(
+              "function(settings, json) {",
+              "$('body').css({'font-family': 'Helvetica'});",
+              "}")
+            )
+          ) %>%
+  formatStyle(
+    'NES',
+    background = styleColorBar(wlogo$NES, 'lightgreen'),
+    backgroundSize = '100% 90%',
+    backgroundRepeat = 'no-repeat',
+    backgroundPosition = 'center') %>%
+  formatStyle(
+    'geneSet',
+    color = 'white',
+    fontWeight = 'bold',
+    backgroundColor = styleEqual(
+      unique(wlogo$geneSet), rep(c('#0053AC', '#856F00'), 4)))
+
+```
+
+          
