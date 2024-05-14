@@ -1,0 +1,187 @@
+---
+title: "Replication of Hung et al., (2020) scRNAseq data integration"
+description: "Attempt to link the data from GEO to Vinícius' pipeline"
+principal investigator: "Joaquín de Navascués"
+researcher: "Joaquín de Navascués"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    theme: readable
+    df_print: paged
+---
+
+```{r setup, echo = FALSE, cache = FALSE}
+ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
+fsep <- .Platform$file.sep
+knitr::opts_chunk$set(dev = 'png', 
+                      fig.align = 'center', fig.height = 7, fig.width = 10, 
+                      pdf.options(encoding = "ISOLatin9.enc"),
+                      fig.path=paste0('notebook_figs', fsep), warning=FALSE, message=FALSE)
+```
+
+```{r load-libraries}
+library(librarian)
+librarian::shelf(dplyr, stringr, Seurat, SeuratDisk,
+                 ggplot2, gridExtra, cowplot,
+                 magick, rvest, openssl,
+                 quiet = TRUE)
+```
+
+# 1 Get the data
+
+These data come from Hung RJ, Hu Y, Kirchner R, et al. A cell atlas of the adult _Drosophila_ midgut. _Proc Natl Acad Sci U S A_. 2020;117(3):1514-1523. doi:[10.1073/pnas.1916820117](https://doi.org/10.1073/pnas.1916820117), available at the GEO with accession number [GSE120537](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE120537).
+
+Read the GSE120537 supplementary data:
+```{r read-GSE120537-supp-data}
+urlhead <- 'https://ftp.ncbi.nlm.nih.gov/geo/series/GSE120nnn/GSE120537/suppl/'
+# get counts
+cs <- file.path(getwd(), 'input', 'GSE120537_counts.rds')
+if ( file.exists(cs) ) {
+  GSE120537_counts <- readRDS(cs)
+} else {
+  counts.con <- gzcon(url(paste0(urlhead, 'GSE120537_counts.csv.gz')))
+  counts.txt <- readLines(counts.con)
+  GSE120537_counts <- read.csv(textConnection(counts.txt),
+                               header = TRUE, row.names = 1)
+  saveRDS(GSE120537_counts, cs)
+}
+# get metadata
+md <- file.path(getwd(), 'input', 'GSE120537_metadata.rds')
+if ( file.exists(md) ) {
+  GSE120537_metadata <- readRDS( md )
+} else {
+  md.con <- gzcon(url(paste0(urlhead, 'GSE120537_metadata.csv.gz')))
+  md.txt <- readLines(md.con)
+  GSE120537_metadata <- read.csv(textConnection(md.txt),
+                               header = TRUE, row.names = 1)
+  saveRDS(GSE120537_metadata, md)
+}
+```
+
+These data have been QC'ed but not integrated by technology yet, nor their clusters completely annotated.
+
+Before we start with the scRNAseq analysis, it would be helpful to change the `FBgn` IDs from the `GSE120537_counts` file to gene symbols, to refer later to known cell type markers. For this, we got help from [Claire Yanhui Hu](https://orcid.org/0000-0003-1494-1402) from the [Perrimon group](https://fgr.hms.harvard.edu/people/claire-yanhui-hu), who provided us with a gene ID-to-symbol table that matched perfectly the GSE120537 dataset.
+
+> <font size="2">(In the spirit of _trying_ to make these scripts 100% reproducible without pulling non-publicly available data out of thin air, I tried to do this programmatically with `biomaRt` (as in the previous scripts for bulk RNAseq) or downloading the latest [FlyBase annotation download](https://wiki.flybase.org/wiki/FlyBase:Downloads_Overview). However, there were always some `FBgn` IDs in the GSE120537 supplementary material that were not contained in those annotations, and when [checked manually](https://flybase.org/convert/id), they mapped _redundantly_ with genes whose stable `FBgn` ID was also in the GSE120537 data. So I gave up and what follows is based on the table provided by Dr Hu, which I presume was curated manually to some extent, or created with the same annotation tools used for the read mapping.)</font>
+
+```{r cleanup-names}
+# identify genes by symbol
+id2sym <- read.csv(file.path(getwd(), 'resources', 'tx2gs.csv'),
+                   col.names=c("gene", "symbol", "transcript")) %>%
+  dplyr::select(-transcript) %>%
+  unique()
+rownames(GSE120537_counts) <- id2sym$symbol[match(rownames(GSE120537_counts), id2sym$gene)]
+# align the cell ID patterns hbc02123.TATGCAGT.TGTTATCA.TGCTCCGT -> hbc02123-TATGCAGT:TGTTATCA-TGCTCCGT
+# after https://stackoverflow.com/questions/43077846
+names(GSE120537_counts) <- sub("\\.(.*?)\\.(.*?)\\.", "-\\1:\\2-", names(GSE120537_counts))
+```
+
+Now we can make the [Seurat object](https://upload.wikimedia.org/wikipedia/commons/6/6e/Seurat-Le_Bec_du_Hoc_%C3%A0_Grandcamp.jpg).
+```{r make-seurat-obj-tech-matters}
+data1 <- CreateSeuratObject(counts = GSE120537_counts,
+                            meta.data = GSE120537_metadata)
+data1 <- SCTransform(data1, vars.to.regress = "pctMito", verbose = FALSE)
+data1 <- RunPCA(data1, verbose = FALSE)
+data1 <- RunUMAP(data1, dims = 1:30, verbose = FALSE)
+techplot <- DimPlot(data1, group.by = "technology", pt.size=0.01) + NoLegend()
+techplot
+```
+
+This is slightly different from the UMAP plot obtained by [Hung et al. at this stage of their analysis](https://htmlpreview.github.io/?https://github.com/hbc/drosophila-midgut-analysis/blob/master/integration/integration.html). The UMAP plots are rotated 180º overall respect each other, and individual point positions shifted slightly:
+```{r comparison-umap, fig.height=3, fig.width=9}
+url <- paste0('https://raw.githubusercontent.com/hbc/drosophila-midgut-analysis/',
+              'master/integration/integration.html')
+pg <- read_html(url)
+img <- html_nodes(pg, "img")
+img_src <- html_attr(img[[1]], "src")
+img_src <- gsub("^data.*base64,", "", img_src)
+ggim <- image_ggplot(image_rotate(image_read(base64_decode(img_src)), 180),
+                     interpolate = FALSE)
+grid.arrange(techplot + ggtitle("My UMAP"), ggim + ggtitle("Hung et al. UMAP"), ncol=2)
+```
+
+This is not unexpected: UMAP detailed results depend on the random seed used (not an issue here as we are using the default), the order in which the data is contained in the Seurat object (unlikely to be different, too) or, most likely in our case, the C++ standard library/compiler on a specific machine. This is discussed at the [GitHub page of the R implementation used by `Seurat` (`uwot`)](https://github.com/jlmelville/uwot) and [this blog post](https://datarock.com.au/blog/whats-the-uncertainty-on-your-umap/). As this does not affect the overall structure of the data, I will continue—with some apprehension.
+
+What follows are essentially the [integration steps taken by Hung et al. (2020)]((https://htmlpreview.github.io/?https://github.com/hbc/drosophila-midgut-analysis/blob/master/integration/integration.html)), using their cell type marker tables (also shared by Dr Hu):
+
+```{r initial-clustering, fig.width=12}
+# rough clustering
+data1 <- FindNeighbors(data1, dims=1:25)
+data1 <- FindClusters(data1, resolution=0.5)
+# read markers
+markers <- readr::read_delim(file.path(getwd(), 'resources', 'cell_type_markers.csv'), col_types = 'cc')
+# manual association of initial clusters with known markers
+# (corresponding visualisations omitted)
+cluster.averages <- AverageExpression(data1, return.seurat=TRUE, group.by="sample")
+clusters <- data1@meta.data$seurat_clusters
+rough_celltype <- case_when(
+  clusters %in% c(3, 21) ~ "ISC/EB",
+  clusters %in% c(9, 17, 20) ~ "EE",
+  clusters %in% c(0, 1, 4, 11, 14, 23) ~ "aEC",
+  clusters %in% c(5, 13, 16) ~ "pEC",
+  clusters %in% c(8, 24) ~ "mEC",
+  clusters %in% c(6) ~ "EC",
+  clusters %in% c(15) ~ "cardia",
+  clusters %in% c(12) ~ "LFC",
+  clusters %in% c(7) ~ "iron/copper",
+  TRUE ~ as.character(clusters))
+data1@meta.data$rough_celltype <- rough_celltype
+Idents(data1) <- data1@meta.data$rough_celltype
+roughcelltype.averages <- AverageExpression(data1, return.seurat=TRUE, group.by="sample")
+# another round of manual assignation of cell types to clusters using trypsin gene expression
+# (visualisations omitted again)
+clusters <- data1@meta.data$seurat_clusters
+compartment <- case_when(
+  clusters %in% c(12, 15) ~ "R1",
+  clusters %in% c(0, 1, 4, 11, 14, 19, 23, 24) ~ "R2",
+  clusters %in% c(7) ~ "R3",
+  clusters %in% c(5, 6, 16) ~ "R4",
+  clusters %in% c(18) ~ "crop",
+  TRUE ~ as.character(clusters))
+data1@meta.data$compartment <- compartment
+Idents(data1) = data1@meta.data$compartment
+compartment.averages = AverageExpression(data1, return.seurat=TRUE, group.by="sample")
+p <- DimPlot(data1, group.by="rough_celltype", label=TRUE) + NoLegend()
+pp <- DimPlot(data1, group.by="compartment", label=TRUE) + NoLegend()
+grid.arrange(p + ggtitle("rough celltype"), pp + ggtitle("compartment"), ncol=2)
+```
+
+Integration needs to change slightly from that of Hung et al., as some functions do not run in later versions of Seurat.
+```{r integration-hung, fig.height=7, fig.width=4}
+Idents(data1) <- data1@meta.data$seurat_clusters
+data1.list <- SplitObject(data1, split.by = "technology")
+for (i in 1:length(data1.list)) {
+  data1.list[[i]] <- NormalizeData(data1.list[[i]], verbose = FALSE)
+  data1.list[[i]] <- ScaleData(data1.list[[i]], verbose = FALSE)
+  data1.list[[i]] <- FindVariableFeatures(data1.list[[i]], do.plot = FALSE)
+}
+anchors <- FindIntegrationAnchors(data1.list, dims = 1:30)
+to_integrate <- Reduce(intersect, lapply(anchors@object.list, rownames))
+data1 <- IntegrateData(anchorset = anchors, dims = 1:30,
+                       features.to.integrate = to_integrate)
+DefaultAssay(data1) <- "integrated"
+data1 <- ScaleData(data1, verbose = FALSE)
+data1 <- RunPCA(data1, npcs = 30, verbose = FALSE)
+data1 <- RunUMAP(data1, reduction = "pca", dims = 1:30)
+data1 <- FindNeighbors(data1, reduction = "pca", dims = 1:30)
+data1 <- FindClusters(data1, resolution = 0.5)
+q <- DimPlot(data1, group.by="rough_celltype", label=TRUE) + NoLegend()
+grid.arrange(p + ggtitle("before integration"), q + ggtitle("after integration"), ncol=1)
+```
+
+It does not look like the resulting clusters are compatible anymore:
+```{r comparison-umap-integrated, fig.height=4, fig.width=9}
+img_src <- html_attr(img[[20]], "src")
+img_src <- gsub("^data.*base64,", "", img_src)
+ggim <- image_ggplot(image_rotate(image_read(base64_decode(img_src)), 180),
+                     interpolate = FALSE)
+grid.arrange(q + ggtitle("My UMAP"), ggim + ggtitle("Hung et al. UMAP"), ncol=2)
+```
+
+This shows how we could have done this using the GEO accession number as starting point; however, historically we obtained first the data from Dr Hu, and therefore we will reflect that in the code described in document #5.
+
+```{r cleanup, echo=FALSE}
+# unlink( file.path(getwd(), 'output', list('GSE120537_counts.rds', 'GSE120537_metadata.rds')) )
+```

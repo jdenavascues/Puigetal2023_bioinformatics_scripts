@@ -1,5 +1,5 @@
 ---
-title: "1. RNAseq analysis of FACS-purified ISC/EBs"
+title: "I. RNAseq analysis of FACS-purified ISC/EBs"
 description: "DGE analysis based on DESeq2"
 principal investigator: "Joaquín de Navascués"
 researchers: "Aleix Puig-Barbé, Joaquín de Navascués"
@@ -12,11 +12,11 @@ output:
     df_print: paged
     css: doc.css
 ---
-```{r setup, echo = FALSE, cache = FALSE}
+```{r setup, echo=FALSE, cache=FALSE}
 ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
 fsep <- .Platform$file.sep
 knitr::opts_chunk$set(dev = 'png', 
-                      fig.align = 'center', fig.height = 7, fig.width = 10, 
+                      fig.align = 'center', fig.height = 7, fig.width = 8.5, 
                       pdf.options(encoding = "ISOLatin9.enc"),
                       fig.path=paste0('notebook_figs', fsep), warning=FALSE, message=FALSE)
 ```
@@ -37,7 +37,6 @@ librarian::shelf(dplyr, stringr,
 
 **Set working directory:**
 ```{r setwd}
-fsep <- .Platform$file.sep
 if (Sys.getenv("RSTUDIO")==1) {
    # setwd to where the editor is, if the IDE is RStudio
   setwd( dirname(rstudioapi::getSourceEditorContext(id = NULL)$path) )
@@ -56,9 +55,14 @@ if (Sys.getenv("RSTUDIO")==1) {
 
 **To save images outside the repo (to reduce size):**
 ```{r define_dir2figs}
-figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
-                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
-                 collapse = fsep)
+## to keep it lightweight for GitHub:
+# figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+#                    paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+#                  collapse = fsep)
+# dir.create(figdir, showWarnings = FALSE)
+
+## for Zenodo:
+figdir <- file.path(getwd(), 'figures')
 dir.create(figdir, showWarnings = FALSE)
 ```
 
@@ -72,7 +76,7 @@ In an nutshell, five different strains were crossed to the _esg-Gal4, UAS-GFP_ d
 * Batch `1`:
   * control
   * _UAS-daughterless_ (_da_)
-  * _UAS-da^RNAi^_ (TRiP-line, either <span style="color: red;">**JF02488 or JF02092**</span>)
+  * _UAS-da^RNAi^_ ([TRiP-line JF02092](https://flybase.org/reports/FBst0026319))
 * Batch `2`:
   * control
   * _UAS-da:da_
@@ -98,7 +102,7 @@ dlist <- getBM(attributes = c('ensembl_gene_id', 'external_gene_name'),
 rownames(dlist) <- dlist$ensembl_gene_id
 dlist[1] <- NULL
 names(dlist) <- 'gene_symbol'
-write.table(dlist, file=file.path(getwd(), "resources", "gene_symbols.txt"), col.names=NA)
+write.table(dlist, file = file.path("resources", "gene_symbols.txt"), col.names=NA)
 ```
 
 
@@ -109,47 +113,51 @@ write.table(dlist, file=file.path(getwd(), "resources", "gene_symbols.txt"), col
 
 The datasets are available in GEO. We can simply get a list of download URLs like this:
 ```{r get-counts-geo}
-# get experimental design data:
-inpath <- file.path(getwd(), 'input')
 samples <- list('C3N4AACXX_1', 'C3N4AACXX_4', 'C3N4AACXX_9', 'C3N4AACXX_7',
                 'C3N4AACXX_11', 'C3N4AACXX_2', 'C3N4AACXX_6', 'C3N4AACXX_10',
                 'CON1', 'CON2', 'CON3', 'DA1', 'DA2', 'DA3', 'SCUTE1',
                 'SCUTE2', 'SCUTE3')
 ids <- paste0('GSM7441', 184:200)
-targets <- read.table(file.path(inpath, "targets.txt"), header=TRUE, sep="\t")
+fore <- 'https://www.ncbi.nlm.nih.gov/geo/download/?acc='
+mid <- '&format=file&file='
+hind <- '.featurecount.txt.gz'
+urls <- paste0(fore, ids, mid, ids, '_', samples, hind)
+names(urls) <- ids
+```
+
+Read `featureCounts` results for all samples:
+```{r load-raw-counts}
+# get experimental design data:
+targets <- read.table(file.path("input", "targets.txt"), header=TRUE, sep="\t")
 targets$GEOsample <- ids[match(targets$sampleID, samples)]
-# download data or read cache
-if (file.exists(file.path(inpath, 'rawData.rds'))) {
-  rawData <- readRDS(file.path(inpath, 'rawData.rds'))
-} else {
-  # prepare download URLs
-  fore <- 'https://www.ncbi.nlm.nih.gov/geo/download/?acc='
-  mid <- '&format=file&file='
-  hind <- '.featurecount.txt.gz'
-  urls <- paste0(fore, ids, mid, ids, '_', samples, hind)
-  names(urls) <- ids
-  # prepare to load gene count data
-  rawData <- NULL
-  # each column of rawData will contain the reads per gene of a sample
-  counter <- 0
-  for (geo in targets$GEOsample) {
-    connlink <- url( urls[ names(urls)==geo ] )
-    on.exit(close(connlink))
-    conn <- gzcon(connlink)
-    txt <- readLines(conn)
-    fileContents <- read.table(textConnection(txt), sep="\t", header=T)
-    rawData <- cbind(rawData, fileContents[,7])
-  }
-  # add column and row names to the `rawData` matrix
-  colnames(rawData) <- paste(targets$Condition, targets$Replicate, targets$Batch, sep='_')
-  rownames(rawData) <- fileContents$Geneid
-  # remove genes with low counts
-  cpms <- cpm(rawData)
-  keep <- rowSums(cpms > 1) >= 3 # detected in at least 3 samples
-  rawData <- rawData[keep,]
-  # cache
-  saveRDS(rawData, file.path(inpath, 'rawData.rds'))
+# prepare to load gene count data
+rawData <- NULL
+# each column of rawData will contain the reads per gene of a sample
+counter <- 0
+for (geo in targets$GEOsample) {
+  connlink <- url( urls[ names(urls)==geo ] )
+  on.exit(close(connlink))
+  conn <- gzcon(connlink)
+  txt <- readLines(conn)
+  fileContents <- read.table(textConnection(txt), sep="\t", header=T)
+  rawData <- cbind(rawData, fileContents[,7])
 }
+
+# add column and row names to the `rawData` matrix
+colnames(rawData) <- paste(targets$Condition, targets$Replicate, targets$Batch, sep='_')
+rownames(rawData) <- fileContents$Geneid
+
+# remove genes with low counts
+cpms <- cpm(rawData)
+keep <- rowSums(cpms > 1) >= 3 # detected in at least 3 samples
+rawData <- rawData[keep,]
+rawData <- rawData[order(row.names(rawData)), ]
+
+# save
+dirpath <- file.path(getwd(), 'output')
+if ( !dir.exists(dirpath) ) dir.create( dirpath )
+write.table(rawData, file = file.path(dirpath, 'featureCounts_allsamples.csv'),
+            sep = '\t', row.names = TRUE, col.names = TRUE)
 ```
 
 
@@ -199,9 +207,7 @@ plotPCA(vsd_Object)
 
 This makes sense: PC1 mostly separates *scute* overexpression from the rest, and PC2 is dominated by 'amount' of *daughterless* function (*da^RNAi^* < *control* < *da* < *da:da*). So we save this:
 ```{r save-vst-bcorr-counts}
-outpath <- file.path(getwd(), 'output')
-if ( !dir.exists(outpath) ) dir.create( outpath )
-saveRDS(vsd_Object, file.path(outpath, 'vst_pseudocounts_batchCorrected.RDS'))
+saveRDS(vsd_Object, file.path(dirpath, 'vst_pseudocounts_batchCorrected.RDS'))
 ```
 
 
@@ -262,7 +268,7 @@ pheatmap(
 
 This is somewhat redundant with PCA but also makes sense, so we will save the `vsd_Object` for the descriptive visualisations.
 ```{r save-pseudocounts}
-saveRDS(vsd_Object, file.path(outpath, 'vsd.RDS'))
+saveRDS(vsd_Object, file.path(dirpath, 'vsd.RDS'))
 ```
 
 
@@ -283,8 +289,8 @@ This seems reasonably in order, so we move on to saving the expression data for 
 ```{r save-counts}
 rawCounts        <- as.data.frame(counts(analysisObject, normalized=FALSE))
 normalisedCounts <- as.data.frame(counts(analysisObject, normalized=TRUE))
-saveRDS(rawCounts, file.path(outpath, 'rawCounts.RDS'))
-saveRDS(normalisedCounts, file.path(outpath, 'normalisedCounts.RDS'))
+saveRDS(rawCounts, file.path(dirpath, 'rawCounts.RDS'))
+saveRDS(normalisedCounts, file.path(dirpath, 'normalisedCounts.RDS'))
 ```
 
 
@@ -314,7 +320,7 @@ for (condtn in test_conditions) {
   deData <- merge(deData, dlist, by=0)
   deData <- deData[,c(1,ncol(deData),2:(ncol(deData)-1))]
   # save for later
-  saveRDS(deData, file=file.path(outpath, paste0('Control_vs_', condtn, ".RDS")))
+  saveRDS(deData, file=file.path(dirpath, paste0('Control_vs_', condtn, ".RDS")))
   # save as Supplementary data for publication
   cols <- c('gene_symbol', 'ensemblGeneID', 'log2FoldChange', 'padj')
   rownames(deData) <- NULL
@@ -330,7 +336,8 @@ for (condtn in test_conditions) {
 Now we just need to write the adjusted p-values and the log~2~(fold changes). That, with the raw counts, should be enough for anyone to do their own 'light' analysis without having to get any files from GEO.
 ```{r table-s3}
 # add `rawCounts` to `tests`
-tests <- rlist::list.append(tests, `Raw counts per gene per sample`=rawCounts)
+testsappendage <- rawCounts %>% tibble::rownames_to_column(var = "ensembl_id")
+tests <- rlist::list.append(tests, `Raw counts per gene per sample` = testsappendage)
 # Supplementary data for publication
 write_xlsx(tests, path = file.path('output', 'Table S3.xlsx'))
 ```
@@ -346,5 +353,5 @@ targets$condition_md <- factor(
   targets$condition_md,
   c('*wild-type*', '*da*', '*da:da*','*da^RNAi^*', '*scute*')
   )
-saveRDS(targets, file.path(outpath, 'targets.RDS'))
+saveRDS(targets, file.path(dirpath, 'targets.RDS'))
 ```

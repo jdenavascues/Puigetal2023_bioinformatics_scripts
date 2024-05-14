@@ -1,5 +1,5 @@
 ---
-title: "3. Functional classification of differentially expressed genes"
+title: "III. Functional classification of differentially expressed genes"
 description: "GSEA of custom lists and KEGG metabolic pathways"
 principal investigator: "Joaquín de Navascués"
 researchers: "Joaquín de Navascués"
@@ -12,12 +12,11 @@ output:
     df_print: paged
     css: doc.css
 ---
-
-```{r setup, echo = FALSE, cache = FALSE}
+```{r setup, echo=FALSE, cache=FALSE}
 ggplot2::theme_set(ggpubr::theme_pubr(base_size=10))
 fsep <- .Platform$file.sep
 knitr::opts_chunk$set(dev = 'png', 
-                      fig.align = 'center', fig.height = 7, fig.width = 10, 
+                      fig.align = 'center', fig.height = 7, fig.width = 8.5, 
                       pdf.options(encoding = "ISOLatin9.enc"),
                       fig.path=paste0('notebook_figs', fsep), warning=FALSE, message=FALSE)
 ```
@@ -31,14 +30,10 @@ knitr::opts_chunk$set(dev = 'png',
 if (!require("librarian")) install.packages("librarian")
 # data
 librarian::shelf(
-  # tidyverse
   dplyr, tidyr, stringr, purrr,
-  # bioinformatics
   org.Dm.eg.db, biomaRt, DOSE, fgsea, clusterProfiler, gage,
-  # plotting
   ggh4x, ggthemes, ggtext, ggrepel, ggnewscale,
   enrichplot, genekitr, pathview,  cetcolor, patchwork,
-# convenience
   here, quiet=TRUE)
 
 if(!exists("gseCP_summarise", mode="function")) source("utils.R")
@@ -64,22 +59,26 @@ if (Sys.getenv("RSTUDIO")==1) {
 
 **To save images outside the repo (to reduce size):**
 ```{r define_dir2figs}
-figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
-                   paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
-                 collapse = fsep)
+## to keep it lightweight for GitHub:
+# figdir <- paste0(c(head(str_split(getwd(), fsep)[[1]],-1),
+#                    paste0(tail(str_split(getwd(), fsep)[[1]],1), '_figures')),
+#                  collapse = fsep)
+# dir.create(figdir, showWarnings = FALSE)
+
+## for Zenodo:
+figdir <- file.path(getwd(), 'figures')
 dir.create(figdir, showWarnings = FALSE)
 ```
 
 Load DGE data from `DESeq2`:
 ```{r load_DEG_data}
 # experimental design and labels
-outpath <- file.path(getwd(), 'output')
-targets <- readRDS(file.path(outpath, 'targets.RDS'))
+targets <- readRDS(file.path('output', 'targets.RDS'))
 # DEG data
-DaKD_deg <- readRDS(file.path(outpath, 'Control_vs_DaKD.RDS'))
-DaOE_deg <- readRDS(file.path(outpath, 'Control_vs_DaOE.RDS'))
-DaDaOE_deg <- readRDS(file.path(outpath, 'Control_vs_DaDaOE.RDS'))
-ScOE_deg <- readRDS(file.path(outpath, 'Control_vs_ScOE.RDS'))
+DaDaOE_deg <- readRDS(file.path('output', 'Control_vs_DaDaOE.RDS'))
+DaKD_deg <- readRDS(file.path('output', 'Control_vs_DaKD.RDS'))
+DaOE_deg <- readRDS(file.path('output', 'Control_vs_DaOE.RDS'))
+ScOE_deg <- readRDS(file.path('output', 'Control_vs_ScOE.RDS'))
 ```
 
 
@@ -92,13 +91,13 @@ I run GSEA using the wrapper from the `clusterProfiler` package, which is based 
 ## 2.1 Cell-type specific transcriptomes
 
 
-Dutta et al. (2015) developed the methods for FACS-purifying different cell types in the adult midgut, and applied them to characterise the transcriptional profiles of ISCs, EBs, EEs and ECs ([doi:10.1016/j.celrep.2015.06.009](https://pubmed.ncbi.nlm.nih.gov/26146076/)). I will use these profiles as gene sets to characterise the 'identity' imparted by our genetic perturbations of _da_ and _sc_.
+Dutta et al. (2015) developed the methods for FACS-purifying different cell types in the adult midgut, and applied them to characterise the transcriptional profiles of ISCs, EBs, EEs and ECs ([doi:10.1016/j.celrep.2015.06.009](https://pubmed.ncbi.nlm.nih.gov/26146076)). I will use these profiles as gene sets to characterise the 'identity' imparted by our genetic perturbations of _da_ and _sc_.
 
 #### Run GSEA
 
 I first load the GMX file storing the gene sets identified in Dutta et al. (2015) and run `clusterProfiler::GSEA`:
 ```{r dutta}
-dutta_gmx <- import_from_gmx(file.path(getwd(),'resources', 'GMX', 'Dutta.gmx'))
+dutta_gmx <- import_from_gmx(file.path(getwd(), 'resources', 'GMX', 'Dutta.gmx'))
 
 daKD_gse_dutta <- GSEA(geneList=make_degrank(DaKD_deg, mode='log2fc', key='ensemblGeneID'),
                        exponent = 1,
@@ -233,10 +232,10 @@ GLAD (_Gene List Annotation for Drosophila_) was developed as an annotation effo
 
 GLAD offers only two levels of gene set organisations: the main lists, and one additional sub-classification that is not present in all classes. The sub-level of classification can have two parallel options: for instance, the main group _Transcription Factors/DNA binding_ could be subdivided by molecular function (_DNA-binding with transcription factor activity_, _Co-factor_, _Chromatin regulation_, etc.), or by molecular structure (_bHLH_, _Zf-C2H2_, _Homeobox_, etc.). Of these, the only one I will be looking into is the different signalling pathways that subdivide the _Major signalling pathways_ annotation term.
 
-The GLAD resource files were downloaded from https://www.flyrnai.org/tools/glad/web/.
+The GLAD resource files were downloaded from https://www.flyrnai.org/tools/glad/web.
 ```{r collect_GLAD_data}
 # read whole dataset from file collection
-gladdir <- file.path(getwd(),'resources', 'GLAD')
+gladdir <- file.path(getwd(), 'resources', 'GLAD')
 gladfiles <- paste(gladdir, list.files(gladdir), sep=fsep)
 names(gladfiles) <- lapply (
   gladfiles,
@@ -325,7 +324,7 @@ dadaOE_gse_glad <- do.call(
   GSEA, c(list(geneList=rank_dada, nPermSimple = 10000, TERM2GENE = glad_gmx), GSEAparams)
   )
 # scute overexpression
-if ( !file.exists( file.path(outpath, 'scOE_gse_glad.RDS') )) {
+if ( !file.exists(file.path('output', 'scOE_gse_glad.RDS')) ) {
   rank_sc <- make_degrank(ScOE_deg, mode='log2fc', key='ensemblGeneID')
   # nPermSimple = 1000000 is needed to calculate accurate p-values
   # this takes a while so I only do it the fist time I run the script
@@ -333,8 +332,8 @@ if ( !file.exists( file.path(outpath, 'scOE_gse_glad.RDS') )) {
   scOE_gse_glad <- do.call(
     GSEA, c(list(geneList=rank_sc, nPermSimple = 1000000, TERM2GENE = glad_gmx), GSEAparams)
     )  # <|-------------------------------------- this step will take ~1h
-  saveRDS(scOE_gse_glad, file.path(outpath, 'scOE_gse_glad.RDS'))
-} else scOE_gse_glad <- readRDS(file.path(outpath, 'scOE_gse_glad.RDS'))
+  saveRDS(scOE_gse_glad, file.path('output', 'scOE_gse_glad.RDS'))
+} else scOE_gse_glad <- readRDS(file.path('output', 'scOE_gse_glad.RDS'))
 ```
 
 #### Layered heatmaps, main terms
@@ -358,7 +357,7 @@ subt <- "for Gene List Annotation for Drosophila gene sets (Hu et al., 2015)"
 p <- layer.heatmap(layerhm.df, subt)
 p + geom_hline(aes(yintercept=3.5), linewidth = 0.5) +
   theme(plot.margin = margin(r = 120))
-ggsave(file.path(figdir,'GSEA_GLAD1.pdf'))
+ggsave(file.path(figdir, 'GSEA_GLAD1.pdf'))
 ```
 
 #### Run GSEA, Major signalling pathways
@@ -388,7 +387,7 @@ subt <- "for GLAD signalling pathways (Hu et al., 2015)"
 p <- layer.heatmap(layerhm.df, subt)
 p + geom_hline(aes(yintercept=3.5), linewidth = 0.5) +
   theme(plot.margin = margin(r = 120))
-ggsave(file.path(figdir,'GSEA_notch.pdf'))
+ggsave(file.path(figdir, 'GSEA_notch.pdf'))
 ```
 
 
